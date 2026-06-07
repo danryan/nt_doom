@@ -135,6 +135,10 @@ build/host/test_wad_read: harness/tests/test_wad_read.cpp harness/tools/wad_buil
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_wad_read.cpp $(HARNESS_SRCS)
 
+build/host/test_geom_nodes: harness/tests/test_geom_nodes.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_geom_nodes.cpp $(HARNESS_SRCS)
+
 build/host/wav_wrap: harness/tools/wav_wrap.cpp harness/tools/wav_wrap.h
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tools/wav_wrap.cpp
@@ -144,7 +148,8 @@ build/host/wad_build: harness/tools/wad_build.cpp harness/tools/wad_build.h
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tools/wad_build.cpp
 
 host: build/host/test_wav_wrap build/host/test_wad build/host/test_doom_render \
-      build/host/test_palette build/host/test_arena build/host/test_wad_read
+      build/host/test_palette build/host/test_arena build/host/test_wad_read \
+      build/host/test_geom_nodes
 
 test: host
 	./build/host/test_wav_wrap
@@ -153,6 +158,7 @@ test: host
 	./build/host/test_palette
 	./build/host/test_arena
 	./build/host/test_wad_read
+	./build/host/test_geom_nodes
 
 # ---------------------------------------------------------------------------
 # Hardware deploy over USB-MIDI sysex (NT firmware v1.13+).
