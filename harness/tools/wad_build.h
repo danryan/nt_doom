@@ -60,8 +60,15 @@ inline std::vector<uint8_t> build_test_wad() {
     // SSECTORS: numsegs, firstseg.
     { std::vector<uint8_t> d; w16(d,4); w16(d,0); add("SSECTORS", d); }
 
-    // NODES: empty (degenerate single-subsector map).
-    add("NODES", {});
+    // NODES: one 28-byte record exercising the typed view. Partition (10,20)+(30,40);
+    // right bbox [100,-100,-50,50], left bbox [200,-200,-60,60]; child[0]=0x8000
+    // (subsector leaf, index 0), child[1]=0x0000 (interior node, index 0).
+    { std::vector<uint8_t> d;
+      w16(d,10); w16(d,20); w16(d,30); w16(d,40);
+      int16_t bb[2][4] = {{100,-100,-50,50},{200,-200,-60,60}};
+      for (int c=0;c<2;++c) for (int k=0;k<4;++k) w16(d,bb[c][k]);
+      w16(d,(int16_t)0x8000); w16(d,(int16_t)0x0000);
+      add("NODES", d); }
 
     // SECTORS: floorh,ceilh,floortex,ceiltex,light,special,tag.
     { std::vector<uint8_t> d; w16(d,0); w16(d,128); name8(d,"FLAT"); name8(d,"FLAT"); w16(d,200); w16(d,0); w16(d,0); add("SECTORS", d); }

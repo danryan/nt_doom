@@ -11,7 +11,17 @@ struct SubsecRaw  { int16_t numSegs, firstSeg; };
 struct SectorRaw  { int16_t floorH, ceilH; char floorTex[8], ceilTex[8]; int16_t light, special, tag; };
 struct LinedefRaw { int16_t v1, v2, flags, special, tag, front, back; };
 struct SidedefRaw { int16_t xoff, yoff; char upper[8], lower[8], middle[8]; int16_t sector; };
+struct NodeRaw {
+    int16_t  x, y, dx, dy;     // partition line origin and delta
+    int16_t  bbox[2][4];       // [child][top, bottom, left, right]
+    uint16_t child[2];         // right, left; high bit (0x8000) => subsector index
+};
 #pragma pack(pop)
+
+// A node child is a subsector leaf when the high bit is set; the low 15 bits are
+// the subsector or node index.
+inline bool     node_child_is_subsector(uint16_t c) { return (c & 0x8000u) != 0; }
+inline uint16_t node_child_index(uint16_t c)        { return (uint16_t)(c & 0x7FFFu); }
 
 struct Map {
     const VertexRaw*  verts   = nullptr; int32_t numVerts   = 0;
@@ -20,7 +30,7 @@ struct Map {
     const SectorRaw*  sectors = nullptr; int32_t numSectors = 0;
     const LinedefRaw* lines   = nullptr; int32_t numLines   = 0;
     const SidedefRaw* sides   = nullptr; int32_t numSides   = 0;
-    int32_t numNodes = 0;
+    const NodeRaw*    nodes   = nullptr; int32_t numNodes   = 0;
 };
 
 inline bool map_load(const Wad& w, const char* mapName, Map& m) {
@@ -41,7 +51,11 @@ inline bool map_load(const Wad& w, const char* mapName, Map& m) {
     if (lump("LINEDEFS", &p, sizeof(LinedefRaw), &m.numLines))   m.lines   = (const LinedefRaw*)p;  else return false;
     if (lump("SIDEDEFS", &p, sizeof(SidedefRaw), &m.numSides))   m.sides   = (const SidedefRaw*)p;  else return false;
     int32_t ni = wad_find_lump(w, "NODES", base);
-    m.numNodes = (ni < 0) ? 0 : (int32_t)(wad_lump_size(w, ni) / 28);
+    if (ni < 0) { m.nodes = nullptr; m.numNodes = 0; }
+    else {
+        m.nodes    = (const NodeRaw*)wad_lump_ptr(w, ni);
+        m.numNodes = (int32_t)(wad_lump_size(w, ni) / sizeof(NodeRaw));
+    }
     return true;
 }
 
