@@ -123,6 +123,10 @@ build/host/test_doom_render: harness/tests/test_doom_render.cpp harness/tools/wa
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_doom_render.cpp $(HARNESS_SRCS)
 
+build/host/test_palette: harness/tests/test_palette.cpp harness/tools/wad_build.h plugins/games/doom/wad.h $(wildcard plugins/games/doom/palette.h) $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_palette.cpp $(HARNESS_SRCS)
+
 build/host/wav_wrap: harness/tools/wav_wrap.cpp harness/tools/wav_wrap.h
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tools/wav_wrap.cpp
@@ -131,12 +135,14 @@ build/host/wad_build: harness/tools/wad_build.cpp harness/tools/wad_build.h
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tools/wad_build.cpp
 
-host: build/host/test_wav_wrap build/host/test_wad build/host/test_doom_render
+host: build/host/test_wav_wrap build/host/test_wad build/host/test_doom_render \
+      build/host/test_palette
 
 test: host
 	./build/host/test_wav_wrap
 	./build/host/test_wad
 	./build/host/test_doom_render
+	./build/host/test_palette
 
 # ---------------------------------------------------------------------------
 # Hardware deploy over USB-MIDI sysex (NT firmware v1.13+).
