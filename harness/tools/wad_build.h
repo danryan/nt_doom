@@ -66,6 +66,19 @@ inline std::vector<uint8_t> build_test_wad() {
     // SECTORS: floorh,ceilh,floortex,ceiltex,light,special,tag.
     { std::vector<uint8_t> d; w16(d,0); w16(d,128); name8(d,"FLAT"); name8(d,"FLAT"); w16(d,200); w16(d,0); w16(d,0); add("SECTORS", d); }
 
+    // PLAYPAL: one 256-entry RGB palette (768 bytes). Gray ramp: entry i is
+    // (i,i,i), so a Rec.601 luma quantizes to gray = i >> 4. Real Doom ships 14
+    // palettes; one exercises the parser and the renderer only uses palette 0.
+    { std::vector<uint8_t> d;
+      for (int i=0;i<256;++i){ d.push_back((uint8_t)i); d.push_back((uint8_t)i); d.push_back((uint8_t)i); }
+      add("PLAYPAL", d); }
+
+    // COLORMAP: 34 maps of 256 bytes. Uniform darkening: map[m][i] = i*(33-m)/33.
+    // Map 0 is identity (brightest), map 33 is all-zero (darkest). Deterministic.
+    { std::vector<uint8_t> d;
+      for (int m=0;m<34;++m) for (int i=0;i<256;++i) d.push_back((uint8_t)((i*(33-m))/33));
+      add("COLORMAP", d); }
+
     // Assemble: 12-byte header, lump data, then directory.
     std::vector<uint8_t> out;
     auto o32 = [&](std::vector<uint8_t>& v, int32_t x){
