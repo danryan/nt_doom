@@ -1,0 +1,8 @@
+[submodule "vendor/distingNT_API"]
+	path = vendor/distingNT_API
+	url = https://github.com/expertsleepersltd/distingNT_API.git
+[submodule "vendor/llvm-project"]
+	path = vendor/llvm-project
+	url = https://github.com/llvm/llvm-project.git
+	branch = llvmorg-19.1.0
+	shallow = true
