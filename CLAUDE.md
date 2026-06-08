@@ -45,12 +45,20 @@ Single Catch2 case: `./build/host/test_doom_render '[render]'` (build first via
 ## Layout
 
 - `plugins/games/doom/*.h` is the engine: `wad.h` (clean-room WAD container parse),
-  `geom.h` (zero-copy map view over WAD lumps), `fb.h` (4-bit framebuffer packing),
-  `render.h` (perspective wall projection + affine texture + distance shading).
+  `geom.h` (zero-copy map view over WAD lumps, including the typed `NodeRaw` NODES
+  view), `fb.h` (4-bit framebuffer packing), `render.h` (perspective wall projection +
+  affine texture + distance shading), and the P1 data subsystem: `arena.h` (no-heap
+  DRAM bump allocator), `wad_read.h` (host-testable WAD read-door seam over the WAV
+  smuggle plus a documented `NT_readSampleFrames` device adapter), `palette.h`
+  (PLAYPAL/COLORMAP to 16-level gray: `luma4`, `palette_load`, `colormap_load`,
+  `shade_gray`).
 - `plugins/games/doom_core_spike.cpp` is the non-interactive renderer-core plug-in
   (GUID `DmSc`), built by the `BUILD_GAME` Makefile macro.
-- `plugins/probes/` holds the two hardware spikes: `wad_read_probe.cpp` (GUID
-  `WdRd`, the SD file door) and `dram_grant_probe.cpp` (GUID `DrAm`, the DRAM grant).
+- `plugins/probes/` holds the hardware probes: `wad_read_probe.cpp` (GUID `WdRd`, the
+  SD file door, evolved in P1 to read a WAV-smuggled WAD into a DRAM arena and run the
+  full parse stack on device as the P1 smoke test) and `dram_grant_probe.cpp` (GUID
+  `DrAm`, the DRAM grant). Per project convention, evolve an existing plug-in for a new
+  phase's on-device demo rather than adding a new probe.
 - `harness/tools/` are host tools (`wav_wrap`, `wad_build`); `harness/tests/` are
   Catch2 binaries; `harness/scripts/` are the hardware-deploy and screenshot scripts.
 - `docs/superpowers/` carries the P0 spec, plan, and the spike results report.
@@ -240,12 +248,33 @@ navigate-away guard). Reset the counter in `draw()`, increment it in `step()`.
   screenshot, not the add return.
 - `harness/scripts/push_file_to_device.py` uploads any local file to an arbitrary
   `/samples/...` path over sysex, so a test WAV can be placed without USB disk mode.
+  The upload (opcode `0x7A 04`) creates the FILE but NOT a missing parent directory,
+  and there is no mkdir opcode. Uploading to a non-existent folder returns a sysex
+  error (`0x7A 01` + ASCII "Unable to open file"); the script only prints "Error
+  uploading file!" and hides the device reason. Target an existing `/samples/<folder>/`
+  (e.g. the `00 PATTERN` folder) or create the folder first via USB disk mode. To
+  diagnose an upload error, send the first chunk yourself and decode the device's
+  sysex reply (bytes 9..-2 are an ASCII error string); do not assume MIDI concurrency.
+- Locate a WAV-smuggled WAD on device by NAME (`_NT_wavInfo::name`), NOT by frame
+  count. A frame-count match collides with real audio samples on a populated card and
+  reads the wrong file (the parse then fails with a non-`IWAD` header). `wad_read_probe`
+  matches the file name substring `TESTMAP`.
+- After a reboot, nt_helper's catalog is stale. A known GUID re-adds after `/mcp
+  reconnect nt_helper`; a brand-new GUID needs a full nt_helper restart (quit and
+  reopen the app: `osascript -e 'quit app "nt_helper"'` then `open -a nt_helper`). The
+  GUI app and the `mcp-server-nt_helper` MCP process are separate; the MIDI-port
+  conflict that corrupts a multi-chunk upload comes from whichever is actively polling.
+  Quit the app for an upload, then reconnect for `add`.
 
 ## Workflow
 
 Non-trivial changes follow brainstorm -> spec -> plan -> TDD -> verify, with docs
 under `docs/superpowers/`. TDD is the default: a failing host test before engine
 code. Hardware smoke check happens after PR open since it needs physical access.
+
+Always update this CLAUDE.md with the phase's durable lessons (firmware quirks,
+hardware-loop gotchas, new engine modules) BEFORE merging the phase PR, so the next
+session inherits them.
 
 ## Markdown
 
