@@ -93,9 +93,11 @@ $(foreach g,$(PRESENT_GAMES),$(eval $(call BUILD_GAME,$(g))))
 # ---------------------------------------------------------------------------
 # Probes (hardware spikes). Single compile + strip; no compiler-rt needed (the
 # probes use only integer + firmware-resolved symbols).
-build/arm/wad_read_probe.o: plugins/probes/wad_read_probe.cpp
+# wad_read_probe runs the P1 read door plus the parse stack (arena, wad, geom,
+# palette) on device, so it needs the engine include path.
+build/arm/wad_read_probe.o: plugins/probes/wad_read_probe.cpp $(wildcard plugins/games/doom/*.h)
 	mkdir -p build/arm
-	$(ARM_CXX) $(ARM_FLAGS) -c -o build/arm/wad_read_probe.raw.o $<
+	$(ARM_CXX) $(ARM_FLAGS) -Iplugins/games -c -o build/arm/wad_read_probe.raw.o $<
 	arm-none-eabi-objcopy -R '.ARM.extab*' -R '.ARM.exidx*' -R '.rel.ARM.exidx*' -R '.ARM.attributes' -R '.comment' -R '.note.GNU-stack' -R '.eh_frame' -R '.eh_frame_hdr' build/arm/wad_read_probe.raw.o $@
 
 # FORCE: the requested size is a -D macro, not a tracked file dependency, so the
