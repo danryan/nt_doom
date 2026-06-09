@@ -173,6 +173,12 @@ build/host/wav_wrap: harness/tools/wav_wrap.cpp harness/tools/wav_wrap.h
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tools/wav_wrap.cpp
 
+# Manual debug tool: runs the full device WAD-load path on a real (uncommitted) WAD under
+# AddressSanitizer. Usage: ./build/host/real_wad_probe /path/to/doom1.wad
+build/host/real_wad_probe: harness/tools/real_wad_probe.cpp harness/tools/wav_wrap.h $(wildcard plugins/games/doom/*.h)
+	mkdir -p build/host
+	$(HOST_CXX) -std=c++17 -g -O0 -fsanitize=address -fno-omit-frame-pointer -Iharness/include -Ivendor/distingNT_API/include -o $@ harness/tools/real_wad_probe.cpp
+
 build/host/wad_build: harness/tools/wad_build.cpp harness/tools/wad_build.h
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tools/wad_build.cpp
