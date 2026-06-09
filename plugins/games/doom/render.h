@@ -75,7 +75,8 @@ inline void solidsegs_insert(SolidSegs& s, int a, int b) {
 // then mark the span occluded. Front-to-back order makes each column drawn once.
 template<class DrawSpan>
 inline void solidsegs_clip_solid(SolidSegs& s, int x1, int x2, DrawSpan drawSpan) {
-    if (x1 < 0) x1 = 0; if (x2 > kScreenWmax) x2 = kScreenWmax;
+    if (x1 < 0) x1 = 0;
+    if (x2 > kScreenWmax) x2 = kScreenWmax;
     if (x2 < x1) return;
     int cur = x1;
     for (int i = 0; i < s.n && cur <= x2; ++i) {
@@ -95,11 +96,13 @@ static const float kDepthLight = 0.03f;                   // depth -> colormap r
 static const uint8_t kFlatWallIndex = 200;                // flat-mode base palette index
 
 inline int light_row(int sectorLight, float depth, int numMaps) {
-    if (sectorLight < 0) sectorLight = 0; if (sectorLight > 255) sectorLight = 255;
+    if (sectorLight < 0) sectorLight = 0;
+    if (sectorLight > 255) sectorLight = 255;
     int base = (255 - sectorLight) >> 3;            // 0 (bright) .. 31 (dark)
     int dadd = (int)(depth * kDepthLight);
     int row  = base + dadd;
-    if (row < 0) row = 0; if (numMaps > 0 && row >= numMaps) row = numMaps - 1;
+    if (row < 0) row = 0;
+    if (numMaps > 0 && row >= numMaps) row = numMaps - 1;
     return row;
 }
 

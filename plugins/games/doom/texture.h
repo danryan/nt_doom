@@ -135,7 +135,8 @@ inline uint8_t texture_sample(const TextureCache* tex, const Map& m, int32_t seg
     if (!T) return 0;
     int u = wall_u(m, segIndex, t, T->w);
     int v = (bot > top) ? ((y - top) * T->h) / (bot - top + 1) : 0;
-    if (v < 0) v = 0; if (v >= T->h) v = T->h - 1;
+    if (v < 0) v = 0;
+    if (v >= T->h) v = T->h - 1;
     return T->texels[u * T->h + v];
 }
 
