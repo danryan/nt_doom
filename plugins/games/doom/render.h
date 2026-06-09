@@ -16,6 +16,7 @@ struct Camera { float x, y, angle; };
 
 static const int kScreenW = 256;
 static const int kScreenH = 64;
+static const int kScreenWmax = 255;   // last screen column
 
 // A 16x16 wall texture in rodata (gray 0..15). Exercises the texture-sample
 // code path so the .text measurement is representative.
@@ -59,6 +60,51 @@ inline int bsp_visit_order(const Map& m, const Camera& cam, int* out, int cap) {
         recurse(recurse, (uint16_t)(m.numNodes - 1), 0);
     }
     return count;
+}
+
+static const int kMaxClip = 64;          // disjoint occluded ranges; ample for 256 cols
+struct SolidSegs {
+    struct Range { int16_t first, last; };   // inclusive, occluded; sorted by first
+    Range r[kMaxClip];
+    int n;
+};
+inline void solidsegs_clear(SolidSegs& s) { s.n = 0; }
+
+// Insert [a,b] into the sorted list, coalescing overlapping/adjacent ranges.
+inline void solidsegs_insert(SolidSegs& s, int a, int b) {
+    using Range = SolidSegs::Range;
+    Range nr{(int16_t)a, (int16_t)b};
+    Range merged[kMaxClip]; int mn = 0; bool placed = false;
+    auto flush = [&](Range x){ if (mn < kMaxClip) merged[mn++] = x; };
+    for (int i = 0; i < s.n; ++i) {
+        Range cur = s.r[i];
+        if (!placed && nr.last + 1 < cur.first) { flush(nr); placed = true; }
+        if (placed || cur.last + 1 < nr.first) { flush(cur); }
+        else { // overlap/adjacent with nr: absorb into nr
+            if (cur.first < nr.first) nr.first = cur.first;
+            if (cur.last  > nr.last)  nr.last  = cur.last;
+        }
+    }
+    if (!placed) flush(nr);
+    s.n = mn; for (int i = 0; i < mn; ++i) s.r[i] = merged[i];
+}
+
+// Clip solid wall span [x1,x2] (clamped, x1<=x2): emit visible gaps via drawSpan,
+// then mark the span occluded. Front-to-back order makes each column drawn once.
+template<class DrawSpan>
+inline void solidsegs_clip_solid(SolidSegs& s, int x1, int x2, DrawSpan drawSpan) {
+    if (x1 < 0) x1 = 0; if (x2 > kScreenWmax) x2 = kScreenWmax;
+    if (x2 < x1) return;
+    int cur = x1;
+    for (int i = 0; i < s.n && cur <= x2; ++i) {
+        const SolidSegs::Range& R = s.r[i];
+        if (R.last < cur) continue;
+        if (R.first > x2) break;
+        if (R.first > cur) drawSpan(cur, R.first - 1);
+        if (R.last + 1 > cur) cur = R.last + 1;
+    }
+    if (cur <= x2) drawSpan(cur, x2);
+    solidsegs_insert(s, x1, x2);
 }
 
 // Renders the walls of subsector 0 into fb (128*64). Float math, FPU-friendly.

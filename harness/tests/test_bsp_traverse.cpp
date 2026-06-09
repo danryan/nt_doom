@@ -43,3 +43,46 @@ TEST_CASE("bsp_visit_order does not hang on a cyclic node", "[traverse]") {
     REQUIRE(n >= 0);
     REQUIRE(n <= 64);   // bounded, no hang
 }
+
+#include <vector>
+
+namespace {
+// Records the visible sub-spans a clip emits, for assertion.
+struct SpanRec { std::vector<std::pair<int,int>> spans;
+    void operator()(int a, int b) { spans.push_back({a, b}); } };
+}
+
+TEST_CASE("solidsegs: first wall draws whole span", "[solidsegs]") {
+    doom::SolidSegs s; doom::solidsegs_clear(s);
+    SpanRec rec;
+    doom::solidsegs_clip_solid(s, 76, 179, [&](int a, int b){ rec(a, b); });
+    REQUIRE(rec.spans.size() == 1);
+    REQUIRE(rec.spans[0] == std::make_pair(76, 179));
+}
+
+TEST_CASE("solidsegs: far wall is clipped by a nearer one", "[solidsegs]") {
+    doom::SolidSegs s; doom::solidsegs_clear(s);
+    SpanRec near; doom::solidsegs_clip_solid(s, 76, 179, [&](int a, int b){ near(a, b); });
+    SpanRec far;  doom::solidsegs_clip_solid(s, 42, 213, [&](int a, int b){ far(a, b); });
+    // Far draws only the two side gaps, never the occluded centre [76,179].
+    REQUIRE(far.spans.size() == 2);
+    REQUIRE(far.spans[0] == std::make_pair(42, 75));
+    REQUIRE(far.spans[1] == std::make_pair(180, 213));
+}
+
+TEST_CASE("solidsegs: fully occluded wall draws nothing", "[solidsegs]") {
+    doom::SolidSegs s; doom::solidsegs_clear(s);
+    SpanRec a; doom::solidsegs_clip_solid(s, 50, 200, [&](int x, int y){ a(x, y); });
+    SpanRec b; doom::solidsegs_clip_solid(s, 80, 150, [&](int x, int y){ b(x, y); });
+    REQUIRE(b.spans.empty());
+}
+
+TEST_CASE("solidsegs: adjacent ranges coalesce", "[solidsegs]") {
+    doom::SolidSegs s; doom::solidsegs_clear(s);
+    SpanRec a; doom::solidsegs_clip_solid(s, 10, 20, [&](int x, int y){ a(x, y); });
+    SpanRec b; doom::solidsegs_clip_solid(s, 21, 30, [&](int x, int y){ b(x, y); });
+    // After two adjacent inserts the list is one merged range; a covering wall
+    // over [10,30] is fully occluded.
+    SpanRec c; doom::solidsegs_clip_solid(s, 10, 30, [&](int x, int y){ c(x, y); });
+    REQUIRE(c.spans.empty());
+}
