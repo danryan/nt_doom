@@ -121,7 +121,7 @@ build/host/test_wad: harness/tests/test_wad.cpp harness/tools/wad_build.h plugin
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_wad.cpp $(HARNESS_SRCS)
 
-build/host/test_doom_render: harness/tests/test_doom_render.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/render.h plugins/games/doom/fb.h $(HARNESS_SRCS)
+build/host/test_doom_render: harness/tests/test_doom_render.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/palette.h plugins/games/doom/render.h plugins/games/doom/fb.h $(HARNESS_SRCS)
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_doom_render.cpp $(HARNESS_SRCS)
 

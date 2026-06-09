@@ -18,23 +18,6 @@ static const int kScreenW = 256;
 static const int kScreenH = 64;
 static const int kScreenWmax = 255;   // last screen column
 
-// A 16x16 wall texture in rodata (gray 0..15). Exercises the texture-sample
-// code path so the .text measurement is representative.
-static const uint8_t kWallTex[16 * 16] = {
-#define R0 12,12,11,11,12,12,11,11,12,12,11,11,12,12,11,11
-    R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0,R0
-#undef R0
-};
-
-inline uint8_t shade(uint8_t base, float dist) {
-    float atten = 64.0f / (dist + 1.0f);   // closer = brighter
-    if (atten > 1.0f) atten = 1.0f;
-    int g = (int)(base * atten);
-    if (g < 0) g = 0;
-    if (g > 15) g = 15;
-    return (uint8_t)g;
-}
-
 // Doom R_PointOnSide: cross = right - left; 0 = front/right side, 1 = back/left.
 inline int point_on_side(const NodeRaw& n, float cx, float cy) {
     float cross = (float)n.dx * (cy - n.y) - (float)n.dy * (cx - n.x);
@@ -107,55 +90,85 @@ inline void solidsegs_clip_solid(SolidSegs& s, int x1, int x2, DrawSpan drawSpan
     solidsegs_insert(s, x1, x2);
 }
 
-// Renders the walls of subsector 0 into fb (128*64). Float math, FPU-friendly.
-inline void render_view(const Map& m, const Camera& cam, uint8_t* fb) {
-    fb_clear(fb);
-    if (m.numSsecs == 0) return;
-    const SubsecRaw& ss = m.ssecs[0];
-    float ca, sa;
-    cos_sin(cam.angle, ca, sa);
+static const float kFovScale  = (float)kScreenW / 2.0f;   // ~90 deg horizontal
+static const float kWallScale = 32.0f;                    // wall-height constant
+static const float kDepthLight = 0.03f;                   // depth -> colormap rows
+static const uint8_t kFlatWallIndex = 200;                // flat-mode base palette index
 
-    const float fovScale = (float)kScreenW / 2.0f;   // ~90 deg horizontal
-    for (int s = 0; s < ss.numSegs; ++s) {
-        const SegRaw& seg = m.segs[ss.firstSeg + s];
-        const VertexRaw& a = m.verts[seg.v1];
-        const VertexRaw& b = m.verts[seg.v2];
+inline int light_row(int sectorLight, float depth, int numMaps) {
+    if (sectorLight < 0) sectorLight = 0; if (sectorLight > 255) sectorLight = 255;
+    int base = (255 - sectorLight) >> 3;            // 0 (bright) .. 31 (dark)
+    int dadd = (int)(depth * kDepthLight);
+    int row  = base + dadd;
+    if (row < 0) row = 0; if (numMaps > 0 && row >= numMaps) row = numMaps - 1;
+    return row;
+}
 
-        // World to camera space.
-        float ax = a.x - cam.x, ay = a.y - cam.y;
-        float bx = b.x - cam.x, by = b.y - cam.y;
-        float a1 =  ax * ca + ay * sa, a2 = -ax * sa + ay * ca;
-        float b1 =  bx * ca + by * sa, b2 = -bx * sa + by * ca;
-        // a1/b1 are depth (forward), a2/b2 are lateral.
+// Draw one seg's wall columns into fb, clipped against the solidsegs list.
+inline void render_seg(const Map& m, int32_t segIndex, float ca, float sa,
+                       const Camera& cam, const Palette& pal, const Colormap& cm,
+                       SolidSegs& solid, uint8_t* fb) {
+    const SegRaw& seg = m.segs[segIndex];
+    const VertexRaw& A = m.verts[seg.v1];
+    const VertexRaw& B = m.verts[seg.v2];
+    float ax = A.x - cam.x, ay = A.y - cam.y;
+    float bx = B.x - cam.x, by = B.y - cam.y;
+    float a1 =  ax * ca + ay * sa, a2 = -ax * sa + ay * ca;   // a1 depth, a2 lateral
+    float b1 =  bx * ca + by * sa, b2 = -bx * sa + by * ca;
+    if (a1 <= 1.0f && b1 <= 1.0f) return;                     // wholly behind
+    if (a1 < 1.0f) a1 = 1.0f;
+    if (b1 < 1.0f) b1 = 1.0f;
+    int sxA = (int)(kScreenW / 2 + (a2 / a1) * kFovScale);
+    int sxB = (int)(kScreenW / 2 + (b2 / b1) * kFovScale);
+    float dA = a1, dB = b1;
+    if (sxA > sxB) { int t = sxA; sxA = sxB; sxB = t; float td = dA; dA = dB; dB = td; }
+    if (sxB < sxA) return;
 
-        if (a1 <= 1.0f && b1 <= 1.0f) continue;   // behind camera
-        if (a1 < 1.0f) a1 = 1.0f;
-        if (b1 < 1.0f) b1 = 1.0f;
+    const SectorRaw* sec = seg_sector(m, segIndex);
+    int sectorLight = sec ? sec->light : 128;
 
-        int sxA = (int)(kScreenW / 2 + (a2 / a1) * fovScale);
-        int sxB = (int)(kScreenW / 2 + (b2 / b1) * fovScale);
-        if (sxA > sxB) { int t = sxA; sxA = sxB; sxB = t; float td=a1; a1=b1; b1=td; }
-        if (sxB <= sxA) continue;
+    int spanA = sxA < 0 ? 0 : sxA;
+    int spanB = sxB > kScreenWmax ? kScreenWmax : sxB;
+    if (spanB < spanA) return;
 
-        for (int x = sxA; x <= sxB; ++x) {
-            if (x < 0 || x >= kScreenW) continue;
+    solidsegs_clip_solid(solid, spanA, spanB, [&](int vx1, int vx2) {
+        for (int x = vx1; x <= vx2; ++x) {
             float t = (sxB == sxA) ? 0.0f : (float)(x - sxA) / (float)(sxB - sxA);
-            float depth = a1 + (b1 - a1) * t;
-            float wallH = (kScreenH * 32.0f) / depth;
+            float depth = dA + (dB - dA) * t;
+            if (depth < 1.0f) depth = 1.0f;
+            float wallH = (kScreenH * kWallScale) / depth;
             int top = (int)(kScreenH / 2 - wallH / 2);
             int bot = (int)(kScreenH / 2 + wallH / 2);
             if (top < 0) top = 0;
-            if (bot >= kScreenH) bot = kScreenH - 1;
-            int u = ((int)(t * 16.0f)) & 15;
-            for (int y = top; y <= bot; ++y) {
-                int vtex = ((y - top) * 16) / (bot - top + 1);
-                if (vtex < 0) vtex = 0;
-                if (vtex > 15) vtex = 15;
-                uint8_t texel = kWallTex[vtex * 16 + u];
-                fb_put(fb, x, y, shade(texel, depth));
-            }
+            if (bot > kScreenH - 1) bot = kScreenH - 1;
+            int light = light_row(sectorLight, depth, cm.numMaps);
+            for (int y = top; y <= bot; ++y)
+                fb_put(fb, x, y, shade_gray(pal, cm, kFlatWallIndex, light));
         }
-    }
+    });
+}
+
+inline void render_subsector(const Map& m, int32_t ssecIndex, float ca, float sa,
+                             const Camera& cam, const Palette& pal, const Colormap& cm,
+                             SolidSegs& solid, uint8_t* fb) {
+    const SubsecRaw& ss = m.ssecs[ssecIndex];
+    for (int s = 0; s < ss.numSegs; ++s)
+        render_seg(m, ss.firstSeg + s, ca, sa, cam, pal, cm, solid, fb);
+}
+
+// Production renderer. tex == nullptr selects flat-shaded sectors (Unit D);
+// Unit E passes a TextureCache and textures the columns instead.
+inline void render_view(const Map& m, const Camera& cam,
+                        const Palette& pal, const Colormap& cm,
+                        const TextureCache* tex, uint8_t* fb) {
+    (void)tex;   // Unit E consumes this; flat-shaded ignores it.
+    fb_clear(fb);
+    float ca, sa; cos_sin(cam.angle, ca, sa);
+    SolidSegs solid; solidsegs_clear(solid);
+    int order[1024];
+    int n = bsp_visit_order(m, cam, order, 1024);
+    for (int i = 0; i < n; ++i)
+        render_subsector(m, order[i], ca, sa, cam, pal, cm, solid, fb);
 }
 
 } // namespace doom
