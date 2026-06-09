@@ -43,3 +43,24 @@ TEST_CASE("BSP map carries PLAYPAL, COLORMAP, and texture lumps", "[bspmap]") {
     REQUIRE(doom::wad_find_lump(w, "TEXTURE1") >= 0);
     REQUIRE(doom::wad_find_lump(w, "PWALL")    >= 0);
 }
+
+TEST_CASE("seg_sector resolves seg -> linedef -> sidedef -> sector", "[segres]") {
+    std::vector<uint8_t> bytes = build_bsp_test_wad();
+    doom::Wad w; REQUIRE(doom::wad_open(bytes.data(), (uint32_t)bytes.size(), w));
+    doom::Map m; REQUIRE(doom::map_load(w, "E1M1", m));
+
+    const doom::SectorRaw* near = doom::seg_sector(m, 0);   // seg0 -> sector0
+    const doom::SectorRaw* far  = doom::seg_sector(m, 1);   // seg1 -> sector1
+    REQUIRE(near != nullptr);
+    REQUIRE(far  != nullptr);
+    REQUIRE(near->light == 224);
+    REQUIRE(far->light  == 160);
+}
+
+TEST_CASE("seg_is_one_sided is true for back == 0xFFFF", "[segres]") {
+    std::vector<uint8_t> bytes = build_bsp_test_wad();
+    doom::Wad w; REQUIRE(doom::wad_open(bytes.data(), (uint32_t)bytes.size(), w));
+    doom::Map m; REQUIRE(doom::map_load(w, "E1M1", m));
+    REQUIRE(doom::seg_is_one_sided(m, 0));
+    REQUIRE(doom::seg_is_one_sided(m, 1));
+}
