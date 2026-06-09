@@ -62,6 +62,7 @@ inline bool move_blocked(const Map& m, const Blockmap& bm,
             blockmap_for_lines_in_cell(bm, c, r, [&](int ln) {
                 if (blocked || !line_is_solid(m, ln)) return;
                 const LinedefRaw& L = m.lines[ln];
+                if ((uint16_t)L.v1 >= (uint16_t)m.numVerts || (uint16_t)L.v2 >= (uint16_t)m.numVerts) return;
                 const VertexRaw& A = m.verts[L.v1];
                 const VertexRaw& B = m.verts[L.v2];
                 if (segs_intersect(x0, y0, x1, y1, A.x, A.y, B.x, B.y)) { blocked = true; return; }

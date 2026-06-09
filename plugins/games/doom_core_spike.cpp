@@ -173,7 +173,9 @@ static void swapRealWad(_doomSpike* a) {
     a->map = m;
     doom::palette_load(w, a->pal);
     doom::colormap_load(w, a->cm);
-    a->texReady = doom::texcache_init(a->tex, w, a->arena);
+    // TEMP: render the real map FLAT first (isolate geometry from texture composition).
+    doom::texcache_init(a->tex, w, a->arena);
+    a->texReady = false;
     a->bmReady  = doom::blockmap_load(w, "E1M1", a->bm);
     a->pose = { kE1M1StartX, kE1M1StartY, kE1M1StartA };
 }

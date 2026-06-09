@@ -116,7 +116,11 @@ inline int light_row(int sectorLight, float depth, int numMaps) {
 inline void render_seg(const Map& m, int32_t segIndex, float ca, float sa,
                        const Camera& cam, const Palette& pal, const Colormap& cm,
                        const TextureCache* tex, SolidSegs& solid, uint8_t* fb) {
+    if (segIndex < 0 || segIndex >= m.numSegs) return;
     const SegRaw& seg = m.segs[segIndex];
+    // Bounds-check vertex indices: a corrupt or partially-read WAD can carry garbage seg
+    // indices that would otherwise dereference unmapped memory (a device hard fault).
+    if ((uint16_t)seg.v1 >= (uint16_t)m.numVerts || (uint16_t)seg.v2 >= (uint16_t)m.numVerts) return;
     const VertexRaw& A = m.verts[seg.v1];
     const VertexRaw& B = m.verts[seg.v2];
     float ax = A.x - cam.x, ay = A.y - cam.y;
@@ -170,6 +174,7 @@ inline void render_seg(const Map& m, int32_t segIndex, float ca, float sa,
 inline void render_subsector(const Map& m, int32_t ssecIndex, float ca, float sa,
                              const Camera& cam, const Palette& pal, const Colormap& cm,
                              const TextureCache* tex, SolidSegs& solid, uint8_t* fb) {
+    if (ssecIndex < 0 || ssecIndex >= m.numSsecs) return;
     const SubsecRaw& ss = m.ssecs[ssecIndex];
     for (int s = 0; s < ss.numSegs; ++s)
         render_seg(m, ss.firstSeg + s, ca, sa, cam, pal, cm, tex, solid, fb);
