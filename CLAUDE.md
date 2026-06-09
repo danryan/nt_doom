@@ -80,7 +80,7 @@ Single Catch2 case: `./build/host/test_doom_render '[render]'` (build first via
   cap. Keep each plug-in under that cap; there is no code offload to DRAM (the
   loader ignores non-canonical executable sections).
 
-## P2 BSP renderer (host-tested, hardware smoke pending)
+## P2 BSP renderer (host-tested, hardware smoke PASS)
 
 The P2 renderer replaces the single-subsector spike with a real BSP walk plus
 solid-seg occlusion and perspective textured walls. Durable lessons:
@@ -116,6 +116,18 @@ solid-seg occlusion and perspective textured walls. Durable lessons:
   member, so `sizeof(_doomSpike)` is ~263 KB. Per the SRAM-cache hazard below, the
   device needs a reboot after the first deploy of this build before
   `calculateRequirements` re-reads the enlarged struct.
+- On-device smoke PASSED. The device capture matched the host occlusion test exactly:
+  near wall column 128 first-lit shade 10 over 22 rows; far wall side gaps (columns 60
+  and 195) shade 4 over 8 rows; column 20 unlit. Near brighter and taller than far, far
+  visible only in the gaps the near wall does not occlude.
+- Synthetic-texture-vs-palette gotcha: with textures enabled, walls render NEAR-BLACK on
+  the synthetic WAD. `PWALL` pixel values are 0..15, and the test WAD's PLAYPAL is a gray
+  ramp, so those low palette indices sit at the dark end (`shade_gray` of index 0..15 is
+  ~gray 0). Flat mode (`kFlatWallIndex = 200` to gray 12) shows the geometry. Host render
+  tests only exercise flat mode (`tex == nullptr`), so this first surfaces on device. To
+  visually verify geometry on hardware with the synthetic WAD, pass `nullptr` (flat); a
+  real `DOOM1.WAD` with real textures and palette renders visible textured walls. The
+  engine is correct; this is a synthetic-data artifact.
 
 ## NT plug-in build mechanics
 
