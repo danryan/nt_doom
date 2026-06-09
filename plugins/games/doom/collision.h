@@ -50,7 +50,9 @@ inline bool move_blocked(const Map& m, const Blockmap& bm,
     float miny = (y0 < y1 ? y0 : y1) - radius, maxy = (y0 > y1 ? y0 : y1) + radius;
     auto cellClamp = [&](float v, float origin, int n) -> int {
         int c = (v < origin) ? 0 : (int)((v - origin) / (float)kBlockSize);
-        if (c < 0) c = 0; if (c >= n) c = n - 1; return c;
+        if (c < 0) c = 0;
+        if (c >= n) c = n - 1;
+        return c;
     };
     int c0 = cellClamp(minx, bm.originX, bm.cols), c1 = cellClamp(maxx, bm.originX, bm.cols);
     int r0 = cellClamp(miny, bm.originY, bm.rows), r1 = cellClamp(maxy, bm.originY, bm.rows);
