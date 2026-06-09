@@ -190,8 +190,12 @@ inline void render_view(const Map& m, const Camera& cam,
     SolidSegs solid; solidsegs_clear(solid);
     // Visit-order ceiling. E1M1 has ~470 subsectors, well under 1024; a larger PWAD
     // would truncate here (bsp_visit_order stops at cap, dropping the deepest leaves).
+    // STATIC, not a stack array: 1024 ints is 4 KB, which overflows the NT's small draw
+    // stack on a real map (the synthetic 2-subsector map never tripped it; E1M1's deep
+    // BSP tree does, corrupting the return address into a hard fault). draw() is called
+    // single-threaded by the firmware, so a static scratch buffer is safe.
     static const int kMaxVisit = 1024;
-    int order[kMaxVisit];
+    static int order[kMaxVisit];
     int n = bsp_visit_order(m, cam, order, kMaxVisit);
     for (int i = 0; i < n; ++i)
         render_subsector(m, order[i], ca, sa, cam, pal, cm, tex, solid, fb);

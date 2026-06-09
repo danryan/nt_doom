@@ -86,7 +86,7 @@ struct _doomSpike : public _NT_algorithm {
     // User-selected WAD load (Folder/Sample parameters, async read into the DRAM arena).
     volatile bool readDone; bool readOk; bool parsed; bool loadReq; bool alive;
     uint32_t wadFrames;
-    uint8_t head4[4]; bool wadOpenOk;   // TEMP debug
+    uint8_t head4[4]; bool wadOpenOk; bool reqOk;   // TEMP debug
 
     uint8_t scrCache[kScrBottomRows * 128];   // overlay-suppression snapshot
     int     postDraw;
@@ -130,7 +130,7 @@ _NT_algorithm* construct(const _NT_algorithmMemoryPtrs& ptrs, const _NT_algorith
     a->panelFwd = a->panelTurn = 0.0f; a->panelFire = false;
     a->readDone = false; a->readOk = false; a->parsed = false;
     a->loadReq = false; a->alive = false; a->wadFrames = 0;
-    a->head4[0] = a->head4[1] = a->head4[2] = a->head4[3] = 0; a->wadOpenOk = false;
+    a->head4[0] = a->head4[1] = a->head4[2] = a->head4[3] = 0; a->wadOpenOk = false; a->reqOk = false;
     a->postDraw = 0;
 
     // Fallback so ADD always renders: parse the embedded synthetic WAD (rodata bytes, no
@@ -192,9 +192,11 @@ void step(_NT_algorithm* self, float* busFrames, int numFramesBy4) {
         --a->postDraw;
     }
 
-    // User-requested load of the selected Folder/Sample. Guarded on a live DRAM grant:
-    // issuing the read to a null dst, or composing into a null arena, faults.
-    if (a->loadReq && a->alive && a->dram && a->dramBytes >= 64 * 1024 && NT_isSdCardMounted()) {
+    // Load the selected Folder/Sample. Guarded on a live DRAM grant: issuing the read to
+    // a null dst, or composing into a null arena, faults. No alive gate: parameterChanged
+    // sets loadReq (the firmware's construct-time fires auto-load the default selection),
+    // and step is already real-time safe (sampleRate==0 guarded above; no self-push).
+    if (a->loadReq && a->dram && a->dramBytes >= 64 * 1024 && NT_isSdCardMounted()) {
         a->loadReq = false;
         uint32_t folder = (uint32_t)a->v[kPFolder], sample = (uint32_t)a->v[kPSample];
         if (folder < NT_getNumSampleFolders()) {
@@ -209,7 +211,7 @@ void step(_NT_algorithm* self, float* busFrames, int numFramesBy4) {
                     g_req.dst = a->dram; g_req.numFrames = a->wadFrames; g_req.startOffset = 0;
                     g_req.channels = kNT_WavMono; g_req.bits = kNT_WavBits16;
                     g_req.progress = kNT_WavNoProgress; g_req.callback = readCb; g_req.callbackData = a;
-                    NT_readSampleFrames(g_req);
+                    a->reqOk = NT_readSampleFrames(g_req);
                 }
             }
         }
@@ -250,10 +252,11 @@ bool draw(_NT_algorithm* self) {
           NT_drawText(x, 6, s); int n = NT_intToString(b, v); b[n] = 0; NT_drawText(x + 14, 6, b); };
       char h[5]; for (int i = 0; i < 4; ++i) h[i] = (a->head4[i] >= 32 && a->head4[i] < 127) ? (char)a->head4[i] : '.';
       h[4] = 0; NT_drawText(0, 6, h);
-      lbl(40,  "rd", a->readDone);
-      lbl(78,  "ok", a->readOk);
-      lbl(116, "w", a->wadOpenOk);
-      lbl(150, "v", a->map.numVerts); }
+      lbl(34,  "rq", a->reqOk);
+      lbl(66,  "rd", a->readDone);
+      lbl(100, "ok", a->readOk);
+      lbl(134, "w", a->wadOpenOk);
+      lbl(166, "v", a->map.numVerts); }
     // Snapshot the bottom rows so step() can restore them over the firmware overlay.
     memcpy(a->scrCache, NT_screen + 56 * 128, sizeof(a->scrCache));
     a->postDraw = 4;
@@ -265,7 +268,7 @@ void parameterChanged(_NT_algorithm* self, int p) {
     auto* a = (_doomSpike*)self;
     // Request a (re)load only once the algorithm is genuinely alive (the firmware fires
     // parameterChanged during construct before the algorithm is registered).
-    if (a->alive && (p == kPFolder || p == kPSample)) a->loadReq = true;
+    if (p == kPFolder || p == kPSample) a->loadReq = true;
 }
 
 // Render the folder/sample NAME for the current index, like the built-in sample player.
