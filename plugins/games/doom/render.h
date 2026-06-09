@@ -2,8 +2,11 @@
 #include <cstdint>
 #include "geom.h"
 #include "fb.h"
+#include "palette.h"
 
 namespace doom {
+
+struct TextureCache;   // forward decl; Unit E defines it. render_view takes a pointer only.
 
 // Provided per-TU: host (test) defines it with <cmath>; ARM defines it from a
 // rodata sine LUT. Keeps this header libm-free.
@@ -29,6 +32,33 @@ inline uint8_t shade(uint8_t base, float dist) {
     if (g < 0) g = 0;
     if (g > 15) g = 15;
     return (uint8_t)g;
+}
+
+// Doom R_PointOnSide: cross = right - left; 0 = front/right side, 1 = back/left.
+inline int point_on_side(const NodeRaw& n, float cx, float cy) {
+    float cross = (float)n.dx * (cy - n.y) - (float)n.dy * (cx - n.x);
+    return cross < 0.0f ? 0 : 1;
+}
+
+// Fills out[0..count) with subsector indices front-to-back; returns count.
+// Depth guard cuts cyclic/malformed NODES (real WADs are acyclic).
+inline int bsp_visit_order(const Map& m, const Camera& cam, int* out, int cap) {
+    int count = 0;
+    auto recurse = [&](auto&& self, uint16_t ref, int depth) -> void {
+        if (count >= cap || depth > m.numNodes) return;
+        if (node_child_is_subsector(ref)) { out[count++] = node_child_index(ref); return; }
+        if (ref >= (uint16_t)m.numNodes) return;
+        const NodeRaw& n = m.nodes[ref];
+        int side = point_on_side(n, cam.x, cam.y);
+        self(self, n.child[side],     depth + 1);   // near first
+        self(self, n.child[side ^ 1], depth + 1);   // far
+    };
+    if (m.numNodes == 0) {
+        for (int32_t i = 0; i < m.numSsecs && count < cap; ++i) out[count++] = (int)i;
+    } else {
+        recurse(recurse, (uint16_t)(m.numNodes - 1), 0);
+    }
+    return count;
 }
 
 // Renders the walls of subsector 0 into fb (128*64). Float math, FPU-friendly.
