@@ -173,9 +173,12 @@ static void swapRealWad(_doomSpike* a) {
     a->map = m;
     doom::palette_load(w, a->pal);
     doom::colormap_load(w, a->cm);
-    // TEMP: render the real map FLAT first (isolate geometry from texture composition).
-    doom::texcache_init(a->tex, w, a->arena);
-    a->texReady = false;
+    a->texReady = doom::texcache_init(a->tex, w, a->arena);
+    // Compose every texture now (in step's context), so draw()'s get() only returns cached
+    // entries. Lazy composition mid-draw would run tex_blit_patch deep in the render call
+    // chain and deepen the already-tight draw stack.
+    if (a->texReady)
+        for (int i = 0; i < a->tex.numTextures; ++i) a->tex.get(i);
     a->bmReady  = doom::blockmap_load(w, "E1M1", a->bm);
     a->pose = { kE1M1StartX, kE1M1StartY, kE1M1StartA };
 }
