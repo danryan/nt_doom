@@ -110,3 +110,124 @@ inline std::vector<uint8_t> build_test_wad() {
     out[dirOffsetPos+2] = (dirStart>>16)&0xFF; out[dirOffsetPos+3] = (dirStart>>24)&0xFF;
     return out;
 }
+
+// Builds a valid IWAD for the P2 BSP renderer: two one-sided walls in two
+// subsectors split by one real acyclic node, posed so the near wall (x=100)
+// occludes the far wall (x=300) only in the shared central columns. Includes
+// PLAYPAL/COLORMAP (gray ramp + 34 darkening maps) and TEXTURE1/PNAMES/PWALL.
+inline std::vector<uint8_t> build_bsp_test_wad() {
+    using namespace wadbuild;
+    std::vector<Lump> lumps;
+    auto add = [&](const char* nm, std::vector<uint8_t> d) {
+        Lump L; memset(L.name, 0, 8);
+        for (int i = 0; i < 8 && nm[i]; ++i) L.name[i] = nm[i];
+        L.data = std::move(d); lumps.push_back(std::move(L));
+    };
+
+    add("E1M1", {});
+
+    // THINGS: player-1 start at (0,0) facing +x (angle 0).
+    { std::vector<uint8_t> d; w16(d,0); w16(d,0); w16(d,0); w16(d,1); w16(d,7); add("THINGS", d); }
+
+    // VERTEXES: near wall v0,v1 at x=100; far wall v2,v3 at x=300.
+    { std::vector<uint8_t> d;
+      int16_t xs[4]={100,100,300,300}, ys[4]={-40,40,-200,200};
+      for (int i=0;i<4;++i){ w16(d,xs[i]); w16(d,ys[i]); } add("VERTEXES", d); }
+
+    // LINEDEFS: v1,v2,flags,special,tag,front,back(0xFFFF). Two one-sided lines.
+    { std::vector<uint8_t> d;
+      // line0: v0->v1, front sidedef 0. line1: v2->v3, front sidedef 1.
+      w16(d,0); w16(d,1); w16(d,1); w16(d,0); w16(d,0); w16(d,0); w16(d,(int16_t)0xFFFF);
+      w16(d,2); w16(d,3); w16(d,1); w16(d,0); w16(d,0); w16(d,1); w16(d,(int16_t)0xFFFF);
+      add("LINEDEFS", d); }
+
+    // SIDEDEFS: xoff,yoff,upper,lower,middle,sector. side0->sector0, side1->sector1.
+    { std::vector<uint8_t> d;
+      w16(d,0); w16(d,0); name8(d,"-"); name8(d,"-"); name8(d,"WALL"); w16(d,0);
+      w16(d,0); w16(d,0); name8(d,"-"); name8(d,"-"); name8(d,"WALL"); w16(d,1);
+      add("SIDEDEFS", d); }
+
+    // SEGS: v1,v2,angle,linedef,side,offset. seg0=near (line0), seg1=far (line1).
+    { std::vector<uint8_t> d;
+      w16(d,0); w16(d,1); w16(d,0); w16(d,0); w16(d,0); w16(d,0);
+      w16(d,2); w16(d,3); w16(d,0); w16(d,1); w16(d,0); w16(d,0);
+      add("SEGS", d); }
+
+    // SSECTORS: ssec0=near (1 seg from 0), ssec1=far (1 seg from 1).
+    { std::vector<uint8_t> d; w16(d,1); w16(d,0); w16(d,1); w16(d,1); add("SSECTORS", d); }
+
+    // NODES: partition x=200, dir (0,100). child[0]=far ssec1, child[1]=near ssec0.
+    { std::vector<uint8_t> d;
+      w16(d,200); w16(d,0); w16(d,0); w16(d,100);
+      int16_t bb[2][4] = {{200,-200,300,300},{40,-40,100,100}};
+      for (int c=0;c<2;++c) for (int k=0;k<4;++k) w16(d,bb[c][k]);
+      w16(d,(int16_t)(0x8000|1)); w16(d,(int16_t)(0x8000|0));
+      add("NODES", d); }
+
+    // SECTORS: floorh,ceilh,floortex,ceiltex,light,special,tag. Near brighter.
+    { std::vector<uint8_t> d;
+      w16(d,0); w16(d,128); name8(d,"FLAT"); name8(d,"FLAT"); w16(d,224); w16(d,0); w16(d,0);
+      w16(d,0); w16(d,128); name8(d,"FLAT"); name8(d,"FLAT"); w16(d,160); w16(d,0); w16(d,0);
+      add("SECTORS", d); }
+
+    // PLAYPAL: gray ramp, entry i = (i,i,i).
+    { std::vector<uint8_t> d;
+      for (int i=0;i<256;++i){ d.push_back((uint8_t)i); d.push_back((uint8_t)i); d.push_back((uint8_t)i); }
+      add("PLAYPAL", d); }
+
+    // COLORMAP: 34 maps, map[m][i] = i*(33-m)/33.
+    { std::vector<uint8_t> d;
+      for (int m=0;m<34;++m) for (int i=0;i<256;++i) d.push_back((uint8_t)((i*(33-m))/33));
+      add("COLORMAP", d); }
+
+    // PNAMES: one patch name PWALL.
+    { std::vector<uint8_t> d;
+      auto o32=[&](int32_t x){ d.push_back(x&0xFF); d.push_back((x>>8)&0xFF); d.push_back((x>>16)&0xFF); d.push_back((x>>24)&0xFF); };
+      o32(1); name8(d,"PWALL"); add("PNAMES", d); }
+
+    // TEXTURE1: one 16x16 texture WALL from patch 0 (PWALL) at origin (0,0).
+    { std::vector<uint8_t> d;
+      auto o32=[&](int32_t x){ d.push_back(x&0xFF); d.push_back((x>>8)&0xFF); d.push_back((x>>16)&0xFF); d.push_back((x>>24)&0xFF); };
+      o32(1);            // numTextures
+      o32(4 + 4);        // offset[0]: after the 4-byte count + 4-byte offset table
+      name8(d,"WALL"); o32(0); w16(d,16); w16(d,16); o32(0); w16(d,1);  // maptexture
+      w16(d,0); w16(d,0); w16(d,0); w16(d,0); w16(d,0);                  // mappatch
+      add("TEXTURE1", d); }
+
+    // PWALL: 16x16 patch, every column a full post, pixel[row] = row (0..15).
+    { std::vector<uint8_t> d;
+      auto o32=[&](int32_t x){ d.push_back(x&0xFF); d.push_back((x>>8)&0xFF); d.push_back((x>>16)&0xFF); d.push_back((x>>24)&0xFF); };
+      w16(d,16); w16(d,16); w16(d,0); w16(d,0);     // width,height,left,top
+      int32_t colStart = 8 + 16*4;                   // header + offset table
+      int32_t colBytes = 1+1+1+16+1+1;               // topdelta,length,pad,16px,pad,0xFF
+      for (int c=0;c<16;++c) o32(colStart + c*colBytes);
+      for (int c=0;c<16;++c) {
+          d.push_back(0); d.push_back(16); d.push_back(0);   // topdelta=0,length=16,pad
+          for (int row=0;row<16;++row) d.push_back((uint8_t)row);
+          d.push_back(0); d.push_back(0xFF);                  // pad, terminator
+      }
+      add("PWALL", d); }
+
+    // Assemble: 12-byte header, lump data, then directory.
+    std::vector<uint8_t> out;
+    auto o32 = [&](std::vector<uint8_t>& v, int32_t x){
+        v.push_back(x & 0xFF); v.push_back((x>>8)&0xFF); v.push_back((x>>16)&0xFF); v.push_back((x>>24)&0xFF); };
+    out.push_back('I'); out.push_back('W'); out.push_back('A'); out.push_back('D');
+    o32(out, (int32_t)lumps.size());
+    int32_t dirOffsetPos = (int32_t)out.size();
+    o32(out, 0);
+    std::vector<std::pair<int32_t,int32_t>> dir;
+    for (auto& L : lumps) {
+        int32_t pos = (int32_t)out.size();
+        out.insert(out.end(), L.data.begin(), L.data.end());
+        dir.push_back({pos, (int32_t)L.data.size()});
+    }
+    int32_t dirStart = (int32_t)out.size();
+    for (size_t i = 0; i < lumps.size(); ++i) {
+        o32(out, dir[i].first); o32(out, dir[i].second);
+        out.insert(out.end(), lumps[i].name, lumps[i].name + 8);
+    }
+    out[dirOffsetPos+0] = dirStart & 0xFF; out[dirOffsetPos+1] = (dirStart>>8)&0xFF;
+    out[dirOffsetPos+2] = (dirStart>>16)&0xFF; out[dirOffsetPos+3] = (dirStart>>24)&0xFF;
+    return out;
+}

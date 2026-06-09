@@ -59,4 +59,23 @@ inline bool map_load(const Wad& w, const char* mapName, Map& m) {
     return true;
 }
 
+inline int16_t seg_sidedef_index(const Map& m, int32_t segIndex) {
+    const SegRaw& s = m.segs[segIndex];
+    const LinedefRaw& ld = m.lines[s.linedef];
+    return s.side == 0 ? ld.front : ld.back;   // 0xFFFF when absent
+}
+inline const SidedefRaw* seg_sidedef(const Map& m, int32_t segIndex) {
+    int16_t si = seg_sidedef_index(m, segIndex);
+    if ((uint16_t)si == 0xFFFFu || si < 0 || si >= m.numSides) return nullptr;
+    return &m.sides[si];
+}
+inline const SectorRaw* seg_sector(const Map& m, int32_t segIndex) {
+    const SidedefRaw* sd = seg_sidedef(m, segIndex);
+    if (!sd || sd->sector < 0 || sd->sector >= m.numSectors) return nullptr;
+    return &m.sectors[sd->sector];
+}
+inline bool seg_is_one_sided(const Map& m, int32_t segIndex) {
+    return (uint16_t)m.lines[m.segs[segIndex].linedef].back == 0xFFFFu;
+}
+
 } // namespace doom

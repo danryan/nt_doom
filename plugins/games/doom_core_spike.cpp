@@ -3,6 +3,8 @@
 #include "doom_test_map.h"
 #include "doom/wad.h"
 #include "doom/geom.h"
+#include "doom/palette.h"
+#include "doom/texture.h"
 #include "doom/render.h"
 
 // ARM cos_sin from a 256-entry rodata sine LUT (no libm sinf).
@@ -55,6 +57,16 @@ void cos_sin(float ang, float& c, float& s) {
 struct _doomSpike : public _NT_algorithm {
     doom::Wad wad;
     doom::Map map;
+    doom::Palette pal;
+    doom::Colormap cm;
+    doom::Arena arena;
+    doom::TextureCache tex;
+    bool texReady = false;
+    uint8_t arenaMem[256 * 1024];   // 256 KB texture scratch; sizeof(_doomSpike) ~263 KB.
+                                    // Device needs a reboot after first deploy for
+                                    // calculateRequirements to re-read the enlarged
+                                    // struct size (firmware SRAM-size cache).
+
 };
 
 static const _NT_parameter parameters[] = {
@@ -73,8 +85,12 @@ _NT_algorithm* construct(const _NT_algorithmMemoryPtrs& ptrs, const _NT_algorith
     auto* a = new (ptrs.sram) _doomSpike();
     a->parameters = parameters;
     a->parameterPages = &parameterPages;
-    doom::wad_open(kDoomTestWad, kDoomTestWadLen, a->wad);
+    doom::wad_open(kDoomBspTestWad, kDoomBspTestWadLen, a->wad);
     doom::map_load(a->wad, "E1M1", a->map);
+    doom::palette_load(a->wad, a->pal);
+    doom::colormap_load(a->wad, a->cm);
+    doom::arena_init(a->arena, a->arenaMem, sizeof(a->arenaMem));
+    a->texReady = doom::texcache_init(a->tex, a->wad, a->arena);
     return a;
 }
 
@@ -82,11 +98,10 @@ void step(_NT_algorithm*, float*, int) {}
 
 bool draw(_NT_algorithm* self) {
     auto* a = (_doomSpike*)self;
-    // Off-center and angled toward a corner so the walls recede at different
-    // depths: a visibly perspective view rather than a flat head-on band.
-    doom::Camera cam{96.0f, 96.0f, 0.6f};
-    doom::render_view(a->map, cam, NT_screen);
-    return true;   // suppress the top parameter line
+    doom::Camera cam{0.0f, 0.0f, 0.0f};   // player-start pose inside the BSP map
+    const doom::TextureCache* tex = a->texReady ? &a->tex : nullptr;
+    doom::render_view(a->map, cam, a->pal, a->cm, tex, NT_screen);
+    return true;
 }
 
 static const _NT_factory factory = {
