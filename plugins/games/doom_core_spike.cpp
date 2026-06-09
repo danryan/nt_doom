@@ -61,17 +61,6 @@ void cos_sin(float ang, float& c, float& s) {
 }
 }
 
-// Locate a WAV-smuggled WAD by name substring (no libc; strstr is not firmware-resolved).
-static bool name_has(const char* name, const char* sub) {
-    if (!name) return false;
-    for (int i = 0; name[i]; ++i) {
-        int j = 0;
-        while (sub[j] && name[i + j] == sub[j]) ++j;
-        if (!sub[j]) return true;
-    }
-    return false;
-}
-
 // Doom E1M1 player-1 start (open space), used when the real WAD parses. The synthetic
 // fallback uses the camera origin instead.
 static const float kE1M1StartX = 1056.0f, kE1M1StartY = -3616.0f, kE1M1StartA = 1.5707963f;
@@ -94,15 +83,21 @@ struct _doomSpike : public _NT_algorithm {
     float      lpState[4];     // CV lowpass state per axis
     float      panelFwd, panelTurn; bool panelFire;   // front-panel intent latch
 
-    // Real-WAD async load (mirrors wad_read_probe, with a dynamic frame count).
-    volatile bool readDone; bool readOk; bool scanned; bool parsed;
-    int  foundFolder, foundSample; uint32_t wadFrames;
+    // User-selected WAD load (Folder/Sample parameters, async read into the DRAM arena).
+    volatile bool readDone; bool readOk; bool parsed; bool loadReq; bool alive;
+    uint32_t wadFrames;
+    uint8_t head4[4]; bool wadOpenOk;   // TEMP debug
 
     uint8_t scrCache[kScrBottomRows * 128];   // overlay-suppression snapshot
     int     postDraw;
 };
 
+// Folder/Sample are selectors into the device sample library; parameterString() renders
+// the folder and file NAME for the current index (like the built-in sample player), so the
+// user dials to the WAD's WAV instead of any name guessing.
 static const _NT_parameter parameters[] = {
+    { .name = "Folder",    .min = 0, .max = 63,   .def = 0,   .unit = kNT_unitHasStrings, .scaling = 0, .enumStrings = nullptr },
+    { .name = "Sample",    .min = 0, .max = 255,  .def = 0,   .unit = kNT_unitHasStrings, .scaling = 0, .enumStrings = nullptr },
     { .name = "Move spd",  .min = 0, .max = 1000, .def = 200, .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
     { .name = "Turn spd",  .min = 0, .max = 628,  .def = 200, .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
     { .name = "Strafe spd",.min = 0, .max = 1000, .def = 200, .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
@@ -113,8 +108,8 @@ static const _NT_parameter parameters[] = {
     { .name = "Strafe bus",.min = 1, .max = 28,   .def = 3,   .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
     { .name = "Fire bus",  .min = 1, .max = 28,   .def = 4,   .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
 };
-enum { kPMove, kPTurn, kPStrafe, kPRadius, kPDeadzone, kPFwdBus, kPTurnBus, kPStrafeBus, kPFireBus };
-static const uint8_t page1[] = { kPMove, kPTurn, kPStrafe, kPRadius, kPDeadzone, kPFwdBus, kPTurnBus, kPStrafeBus, kPFireBus };
+enum { kPFolder, kPSample, kPMove, kPTurn, kPStrafe, kPRadius, kPDeadzone, kPFwdBus, kPTurnBus, kPStrafeBus, kPFireBus };
+static const uint8_t page1[] = { kPFolder, kPSample, kPMove, kPTurn, kPStrafe, kPRadius, kPDeadzone, kPFwdBus, kPTurnBus, kPStrafeBus, kPFireBus };
 static const _NT_parameterPage pages[] = { { .name = "Doom", .numParams = ARRAY_SIZE(page1), .params = page1 } };
 static const _NT_parameterPages parameterPages = { .numPages = 1, .pages = pages };
 
@@ -133,8 +128,9 @@ _NT_algorithm* construct(const _NT_algorithmMemoryPtrs& ptrs, const _NT_algorith
     a->pose = { 0.0f, 0.0f, 0.0f };
     for (int i = 0; i < 4; ++i) a->lpState[i] = 0.0f;
     a->panelFwd = a->panelTurn = 0.0f; a->panelFire = false;
-    a->readDone = false; a->readOk = false; a->scanned = false; a->parsed = false;
-    a->foundFolder = a->foundSample = -1; a->wadFrames = 0;
+    a->readDone = false; a->readOk = false; a->parsed = false;
+    a->loadReq = false; a->alive = false; a->wadFrames = 0;
+    a->head4[0] = a->head4[1] = a->head4[2] = a->head4[3] = 0; a->wadOpenOk = false;
     a->postDraw = 0;
 
     // Fallback so ADD always renders: parse the embedded synthetic WAD (rodata bytes, no
@@ -161,15 +157,17 @@ static void readCb(void* data, bool success) {
     auto* a = (_doomSpike*)data; a->readOk = success; a->readDone = true;
 }
 
-// Parse the real WAD once the read completes; swap the active map/palette/textures/blockmap
-// and place the player at the E1M1 start.
+// Parse the selected WAD once the read completes; swap the active map/palette/textures/
+// blockmap and place the player at the E1M1 start. Keeps the synthetic fallback on failure.
 static void swapRealWad(_doomSpike* a) {
     uint32_t wadLen = a->wadFrames * 2;   // 2 WAD bytes per 16-bit frame
     doom::arena_reset(a->arena);
     uint8_t* wadBytes = (uint8_t*)doom::arena_alloc(a->arena, wadLen, 8);
-    if (!wadBytes) return;                // keep the synthetic fallback on overflow
+    if (!wadBytes) return;
+    for (int i = 0; i < 4; ++i) a->head4[i] = wadBytes[i];   // TEMP debug
     doom::Wad w;
-    if (!doom::wad_open(wadBytes, wadLen, w)) return;
+    a->wadOpenOk = doom::wad_open(wadBytes, wadLen, w);
+    if (!a->wadOpenOk) return;
     doom::Map m;
     if (!doom::map_load(w, "E1M1", m)) return;
     a->map = m;
@@ -192,31 +190,26 @@ void step(_NT_algorithm* self, float* busFrames, int numFramesBy4) {
         --a->postDraw;
     }
 
-    // One-shot real-WAD locate and async read (dynamic frame count). Guarded on a live
-    // DRAM grant: issuing the read to a null dst, or composing into a null arena, faults.
-    if (!a->scanned && a->dram && a->dramBytes >= 64 * 1024 && NT_isSdCardMounted()) {
-        a->scanned = true;
-        int nf = (int)NT_getNumSampleFolders();
-        for (int f = 0; f < nf && a->foundFolder < 0; ++f) {
-            _NT_wavFolderInfo finfo; NT_getSampleFolderInfo((uint32_t)f, finfo);
-            int nfiles = (int)finfo.numSampleFiles;
-            for (int s = 0; s < nfiles; ++s) {
-                _NT_wavInfo info; NT_getSampleFileInfo((uint32_t)f, (uint32_t)s, info);
-                if (info.bits == kNT_WavBits16 &&
-                    (name_has(info.name, "DOOM1") || name_has(info.name, "E1M1"))) {
-                    a->foundFolder = f; a->foundSample = s;
+    // User-requested load of the selected Folder/Sample. Guarded on a live DRAM grant:
+    // issuing the read to a null dst, or composing into a null arena, faults.
+    if (a->loadReq && a->alive && a->dram && a->dramBytes >= 64 * 1024 && NT_isSdCardMounted()) {
+        a->loadReq = false;
+        uint32_t folder = (uint32_t)a->v[kPFolder], sample = (uint32_t)a->v[kPSample];
+        if (folder < NT_getNumSampleFolders()) {
+            _NT_wavFolderInfo finfo; NT_getSampleFolderInfo(folder, finfo);
+            if (sample < finfo.numSampleFiles) {
+                _NT_wavInfo info; NT_getSampleFileInfo(folder, sample, info);
+                if (info.bits == kNT_WavBits16 && info.numFrames > 0) {
                     a->wadFrames = info.numFrames;
                     if (a->wadFrames * 2 > a->dramBytes) a->wadFrames = a->dramBytes / 2;
-                    break;
+                    a->readDone = false; a->readOk = false; a->parsed = false;
+                    g_req.folder = folder; g_req.sample = sample;
+                    g_req.dst = a->dram; g_req.numFrames = a->wadFrames; g_req.startOffset = 0;
+                    g_req.channels = kNT_WavMono; g_req.bits = kNT_WavBits16;
+                    g_req.progress = kNT_WavNoProgress; g_req.callback = readCb; g_req.callbackData = a;
+                    NT_readSampleFrames(g_req);
                 }
             }
-        }
-        if (a->foundFolder >= 0) {
-            g_req.folder = (uint32_t)a->foundFolder; g_req.sample = (uint32_t)a->foundSample;
-            g_req.dst = a->dram; g_req.numFrames = a->wadFrames; g_req.startOffset = 0;
-            g_req.channels = kNT_WavMono; g_req.bits = kNT_WavBits16;
-            g_req.progress = kNT_WavNoProgress; g_req.callback = readCb; g_req.callbackData = a;
-            NT_readSampleFrames(g_req);
         }
     }
     if (a->readDone && a->readOk && !a->parsed) { a->parsed = true; swapRealWad(a); }
@@ -249,10 +242,53 @@ bool draw(_NT_algorithm* self) {
     doom::Camera cam{ a->pose.x, a->pose.y, a->pose.angle };
     const doom::TextureCache* tex = a->texReady ? &a->tex : nullptr;
     doom::render_view(a->map, cam, a->pal, a->cm, tex, NT_screen);
+    // TEMP debug HUD: surface the WAD load/parse state (remove before merge).
+    { char b[12];
+      auto lbl = [&](int x, const char* s, int v) {
+          NT_drawText(x, 6, s); int n = NT_intToString(b, v); b[n] = 0; NT_drawText(x + 14, 6, b); };
+      char h[5]; for (int i = 0; i < 4; ++i) h[i] = (a->head4[i] >= 32 && a->head4[i] < 127) ? (char)a->head4[i] : '.';
+      h[4] = 0; NT_drawText(0, 6, h);
+      lbl(40,  "rd", a->readDone);
+      lbl(78,  "ok", a->readOk);
+      lbl(116, "w", a->wadOpenOk);
+      lbl(150, "v", a->map.numVerts); }
     // Snapshot the bottom rows so step() can restore them over the firmware overlay.
     memcpy(a->scrCache, NT_screen + 56 * 128, sizeof(a->scrCache));
     a->postDraw = 4;
+    a->alive = true;
     return true;
+}
+
+void parameterChanged(_NT_algorithm* self, int p) {
+    auto* a = (_doomSpike*)self;
+    // Request a (re)load only once the algorithm is genuinely alive (the firmware fires
+    // parameterChanged during construct before the algorithm is registered).
+    if (a->alive && (p == kPFolder || p == kPSample)) a->loadReq = true;
+}
+
+// Render the folder/sample NAME for the current index, like the built-in sample player.
+int parameterString(_NT_algorithm* self, int p, int v, char* buff) {
+    auto* a = (_doomSpike*)self;
+    buff[0] = 0;
+    if (!NT_isSdCardMounted()) return 0;
+    const char* nm = nullptr;
+    if (p == kPFolder) {
+        if ((uint32_t)v >= NT_getNumSampleFolders()) return 0;
+        _NT_wavFolderInfo fi; NT_getSampleFolderInfo((uint32_t)v, fi); nm = fi.name;
+    } else if (p == kPSample) {
+        uint32_t folder = (uint32_t)a->v[kPFolder];
+        if (folder >= NT_getNumSampleFolders()) return 0;
+        _NT_wavFolderInfo fi; NT_getSampleFolderInfo(folder, fi);
+        if ((uint32_t)v >= fi.numSampleFiles) return 0;
+        _NT_wavInfo info; NT_getSampleFileInfo(folder, (uint32_t)v, info); nm = info.name;
+    } else {
+        return 0;
+    }
+    if (!nm) return 0;
+    int n = 0;
+    while (nm[n] && n < kNT_parameterStringSize - 1) { buff[n] = nm[n]; ++n; }
+    buff[n] = 0;
+    return n;
 }
 
 uint32_t hasCustomUi(_NT_algorithm*) {
@@ -293,6 +329,7 @@ static const _NT_factory factory = {
     .numSpecifications = 0,
     .calculateRequirements = calculateRequirements,
     .construct = construct,
+    .parameterChanged = parameterChanged,
     .step = step,
     .draw = draw,
     .tags = kNT_tagInstrument,
@@ -300,6 +337,7 @@ static const _NT_factory factory = {
     .customUi = customUi,
     .serialise = serialise,
     .deserialise = deserialise,
+    .parameterString = parameterString,
 };
 
 extern "C" __attribute__((visibility("default"))) uintptr_t pluginEntry(_NT_selector selector, uint32_t data) {
