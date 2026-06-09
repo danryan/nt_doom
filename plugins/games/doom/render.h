@@ -23,12 +23,18 @@ inline int point_on_side(const NodeRaw& n, float cx, float cy) {
     return cross < 0.0f ? 0 : 1;
 }
 
+// Absolute recursion-depth ceiling. Real Doom BSP trees are balanced and rarely
+// exceed a few dozen levels; this bounds the embedded draw-thread stack against a
+// pathological or hostile near-linear tree even when numNodes is large.
+static const int kMaxBspDepth = 256;
+
 // Fills out[0..count) with subsector indices front-to-back; returns count.
-// Depth guard cuts cyclic/malformed NODES (real WADs are acyclic).
+// Depth guard cuts cyclic/malformed NODES (real WADs are acyclic); kMaxBspDepth
+// additionally bounds the stack for large near-linear trees.
 inline int bsp_visit_order(const Map& m, const Camera& cam, int* out, int cap) {
     int count = 0;
     auto recurse = [&](auto&& self, uint16_t ref, int depth) -> void {
-        if (count >= cap || depth > m.numNodes) return;
+        if (count >= cap || depth > m.numNodes || depth > kMaxBspDepth) return;
         if (node_child_is_subsector(ref)) { out[count++] = node_child_index(ref); return; }
         if (ref >= (uint16_t)m.numNodes) return;
         const NodeRaw& n = m.nodes[ref];
@@ -129,6 +135,13 @@ inline void render_seg(const Map& m, int32_t segIndex, float ca, float sa,
     const SectorRaw* sec = seg_sector(m, segIndex);
     int sectorLight = sec ? sec->light : 128;
 
+    // Texture id is invariant across the seg's columns; resolve it once.
+    int texId = -1;
+    if (tex) {
+        const SidedefRaw* sd = seg_sidedef(m, segIndex);
+        if (sd) texId = tex->find(sd->middle);
+    }
+
     int spanA = sxA < 0 ? 0 : sxA;
     int spanB = sxB > kScreenWmax ? kScreenWmax : sxB;
     if (spanB < spanA) return;
@@ -144,11 +157,6 @@ inline void render_seg(const Map& m, int32_t segIndex, float ca, float sa,
             if (top < 0) top = 0;
             if (bot > kScreenH - 1) bot = kScreenH - 1;
             int light = light_row(sectorLight, depth, cm.numMaps);
-            int texId = -1;
-            if (tex) {
-                const SidedefRaw* sd = seg_sidedef(m, segIndex);
-                if (sd) texId = tex->find(sd->middle);
-            }
             for (int y = top; y <= bot; ++y) {
                 uint8_t palIndex = (tex && texId >= 0)
                     ? texture_sample(tex, m, segIndex, texId, t, y, top, bot)
@@ -175,8 +183,11 @@ inline void render_view(const Map& m, const Camera& cam,
     fb_clear(fb);
     float ca, sa; cos_sin(cam.angle, ca, sa);
     SolidSegs solid; solidsegs_clear(solid);
-    int order[1024];
-    int n = bsp_visit_order(m, cam, order, 1024);
+    // Visit-order ceiling. E1M1 has ~470 subsectors, well under 1024; a larger PWAD
+    // would truncate here (bsp_visit_order stops at cap, dropping the deepest leaves).
+    static const int kMaxVisit = 1024;
+    int order[kMaxVisit];
+    int n = bsp_visit_order(m, cam, order, kMaxVisit);
     for (int i = 0; i < n; ++i)
         render_subsector(m, order[i], ca, sa, cam, pal, cm, tex, solid, fb);
 }
