@@ -17,11 +17,11 @@ struct TextureCache {
     const uint8_t* pnames   = nullptr;
     int32_t numTextures = 0;
     int32_t numPnames   = 0;
-    Texture entries[kMaxTextures];
-    bool    composed[kMaxTextures];
+    mutable Texture entries[kMaxTextures];
+    mutable bool    composed[kMaxTextures];
 
     int find(const char name8[8]) const;
-    const Texture* get(int textureIndex);
+    const Texture* get(int textureIndex) const;
 };
 
 inline uint16_t tex_u16(const uint8_t* p) { return (uint16_t)(p[0] | (p[1] << 8)); }
@@ -82,7 +82,7 @@ inline void tex_blit_patch(uint8_t* dst, int dstW, int dstH,
     }
 }
 
-inline const Texture* TextureCache::get(int textureIndex) {
+inline const Texture* TextureCache::get(int textureIndex) const {
     if (textureIndex < 0 || textureIndex >= numTextures) return nullptr;
     if (composed[textureIndex]) return &entries[textureIndex];
 
@@ -131,7 +131,7 @@ inline int wall_u(const Map& m, int32_t segIndex, float t, int texW) {
 
 inline uint8_t texture_sample(const TextureCache* tex, const Map& m, int32_t segIndex,
                               int textureIndex, float t, int y, int top, int bot) {
-    const Texture* T = const_cast<TextureCache*>(tex)->get(textureIndex);
+    const Texture* T = tex->get(textureIndex);
     if (!T) return 0;
     int u = wall_u(m, segIndex, t, T->w);
     int v = (bot > top) ? ((y - top) * T->h) / (bot - top + 1) : 0;
