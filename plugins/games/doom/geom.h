@@ -78,4 +78,63 @@ inline bool seg_is_one_sided(const Map& m, int32_t segIndex) {
     return (uint16_t)m.lines[m.segs[segIndex].linedef].back == 0xFFFFu;
 }
 
+// Doom BLOCKMAP: a uniform 128-unit grid where each cell lists the linedefs that cross
+// it, used as the collision broadphase. Header is originX, originY, cols, rows (int16);
+// then cols*rows uint16 word offsets (units of int16 from the lump start) to per-cell
+// blocklists; each blocklist is a leading 0x0000 word, a run of uint16 linedef indices,
+// and a 0xFFFF terminator.
+static const int kBlockSize = 128;
+struct Blockmap {
+    const uint8_t*  base    = nullptr;
+    int16_t         originX = 0, originY = 0;
+    uint16_t        cols    = 0, rows = 0;
+    const uint16_t* offsets = nullptr;   // cols*rows entries
+    uint32_t        words   = 0;         // lumpSize / 2, for bounds
+};
+
+inline bool blockmap_load(const Wad& w, const char* mapName, Blockmap& bm) {
+    int32_t base = wad_find_lump(w, mapName);
+    if (base < 0) return false;
+    int32_t bi = wad_find_lump(w, "BLOCKMAP", base);
+    if (bi < 0) return false;
+    const uint8_t* p = wad_lump_ptr(w, bi);
+    uint32_t sz = wad_lump_size(w, bi);
+    if (sz < 8) return false;
+    const int16_t* h = (const int16_t*)p;
+    bm.base    = p;
+    bm.originX = h[0]; bm.originY = h[1];
+    bm.cols    = (uint16_t)h[2]; bm.rows = (uint16_t)h[3];
+    bm.offsets = (const uint16_t*)(p + 8);
+    bm.words   = sz / 2;
+    if (4u + (uint32_t)bm.cols * bm.rows > bm.words) return false;   // table must fit
+    return true;
+}
+
+// World point to cell coords. False when below the origin or past the grid. The origin is
+// the grid minimum, so x >= originX implies the truncating cast equals floor.
+inline bool blockmap_cell_of(const Blockmap& bm, float x, float y, int& col, int& row) {
+    if (x < bm.originX || y < bm.originY) return false;
+    int c = (int)((x - bm.originX) / (float)kBlockSize);
+    int r = (int)((y - bm.originY) / (float)kBlockSize);
+    if (c < 0 || c >= bm.cols || r < 0 || r >= bm.rows) return false;
+    col = c; row = r; return true;
+}
+
+// Call fn(int lineIndex) for each linedef listed in cell (col,row). No-op when out of
+// range or the offset points past the lump. Skips the mandatory leading 0x0000 marker
+// unconditionally (so a genuine linedef index 0 is not mistaken for it).
+template<class F>
+inline void blockmap_for_lines_in_cell(const Blockmap& bm, int col, int row, F fn) {
+    if (col < 0 || col >= bm.cols || row < 0 || row >= bm.rows) return;
+    uint32_t idx = (uint32_t)row * bm.cols + (uint32_t)col;
+    uint32_t off = bm.offsets[idx];
+    if (off + 1 >= bm.words) return;
+    const int16_t* wptr = (const int16_t*)bm.base;
+    for (uint32_t i = off + 1; i < bm.words; ++i) {
+        uint16_t v = (uint16_t)wptr[i];
+        if (v == 0xFFFFu) break;
+        fn((int)v);
+    }
+}
+
 } // namespace doom

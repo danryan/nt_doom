@@ -153,6 +153,22 @@ build/host/test_texture: harness/tests/test_texture.cpp harness/tools/wad_build.
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_texture.cpp $(HARNESS_SRCS)
 
+build/host/test_blockmap: harness/tests/test_blockmap.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_blockmap.cpp $(HARNESS_SRCS)
+
+build/host/test_movement: harness/tests/test_movement.cpp plugins/games/doom/movement.h plugins/games/doom/render.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_movement.cpp $(HARNESS_SRCS)
+
+build/host/test_input: harness/tests/test_input.cpp plugins/games/doom/input.h plugins/games/doom/movement.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_input.cpp $(HARNESS_SRCS)
+
+build/host/test_collision: harness/tests/test_collision.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/collision.h plugins/games/doom/movement.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_collision.cpp $(HARNESS_SRCS)
+
 build/host/wav_wrap: harness/tools/wav_wrap.cpp harness/tools/wav_wrap.h
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tools/wav_wrap.cpp
@@ -164,7 +180,8 @@ build/host/wad_build: harness/tools/wad_build.cpp harness/tools/wad_build.h
 host: build/host/test_wav_wrap build/host/test_wad build/host/test_doom_render \
       build/host/test_palette build/host/test_arena build/host/test_wad_read \
       build/host/test_geom_nodes build/host/test_bsp_map build/host/test_bsp_traverse \
-      build/host/test_texture
+      build/host/test_texture build/host/test_blockmap build/host/test_movement \
+      build/host/test_input build/host/test_collision
 
 test: host
 	./build/host/test_wav_wrap
@@ -177,6 +194,10 @@ test: host
 	./build/host/test_bsp_map
 	./build/host/test_bsp_traverse
 	./build/host/test_texture
+	./build/host/test_blockmap
+	./build/host/test_movement
+	./build/host/test_input
+	./build/host/test_collision
 
 # ---------------------------------------------------------------------------
 # Hardware deploy over USB-MIDI sysex (NT firmware v1.13+).
