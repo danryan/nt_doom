@@ -121,7 +121,7 @@ build/host/test_wad: harness/tests/test_wad.cpp harness/tools/wad_build.h plugin
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_wad.cpp $(HARNESS_SRCS)
 
-build/host/test_doom_render: harness/tests/test_doom_render.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/palette.h plugins/games/doom/render.h plugins/games/doom/fb.h $(HARNESS_SRCS)
+build/host/test_doom_render: harness/tests/test_doom_render.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/palette.h plugins/games/doom/render.h plugins/games/doom/fb.h plugins/games/doom/texture.h $(HARNESS_SRCS)
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_doom_render.cpp $(HARNESS_SRCS)
 
@@ -145,9 +145,13 @@ build/host/test_bsp_map: harness/tests/test_bsp_map.cpp harness/tools/wad_build.
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_bsp_map.cpp $(HARNESS_SRCS)
 
-build/host/test_bsp_traverse: harness/tests/test_bsp_traverse.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/render.h $(HARNESS_SRCS)
+build/host/test_bsp_traverse: harness/tests/test_bsp_traverse.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/render.h plugins/games/doom/texture.h $(HARNESS_SRCS)
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_bsp_traverse.cpp $(HARNESS_SRCS)
+
+build/host/test_texture: harness/tests/test_texture.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/arena.h plugins/games/doom/texture.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_texture.cpp $(HARNESS_SRCS)
 
 build/host/wav_wrap: harness/tools/wav_wrap.cpp harness/tools/wav_wrap.h
 	mkdir -p build/host
@@ -159,7 +163,8 @@ build/host/wad_build: harness/tools/wad_build.cpp harness/tools/wad_build.h
 
 host: build/host/test_wav_wrap build/host/test_wad build/host/test_doom_render \
       build/host/test_palette build/host/test_arena build/host/test_wad_read \
-      build/host/test_geom_nodes build/host/test_bsp_map build/host/test_bsp_traverse
+      build/host/test_geom_nodes build/host/test_bsp_map build/host/test_bsp_traverse \
+      build/host/test_texture
 
 test: host
 	./build/host/test_wav_wrap
@@ -171,6 +176,7 @@ test: host
 	./build/host/test_geom_nodes
 	./build/host/test_bsp_map
 	./build/host/test_bsp_traverse
+	./build/host/test_texture
 
 # ---------------------------------------------------------------------------
 # Hardware deploy over USB-MIDI sysex (NT firmware v1.13+).

@@ -3,10 +3,9 @@
 #include "geom.h"
 #include "fb.h"
 #include "palette.h"
+#include "texture.h"
 
 namespace doom {
-
-struct TextureCache;   // forward decl; Unit E defines it. render_view takes a pointer only.
 
 // Provided per-TU: host (test) defines it with <cmath>; ARM defines it from a
 // rodata sine LUT. Keeps this header libm-free.
@@ -107,7 +106,7 @@ inline int light_row(int sectorLight, float depth, int numMaps) {
 // Draw one seg's wall columns into fb, clipped against the solidsegs list.
 inline void render_seg(const Map& m, int32_t segIndex, float ca, float sa,
                        const Camera& cam, const Palette& pal, const Colormap& cm,
-                       SolidSegs& solid, uint8_t* fb) {
+                       const TextureCache* tex, SolidSegs& solid, uint8_t* fb) {
     const SegRaw& seg = m.segs[segIndex];
     const VertexRaw& A = m.verts[seg.v1];
     const VertexRaw& B = m.verts[seg.v2];
@@ -142,18 +141,27 @@ inline void render_seg(const Map& m, int32_t segIndex, float ca, float sa,
             if (top < 0) top = 0;
             if (bot > kScreenH - 1) bot = kScreenH - 1;
             int light = light_row(sectorLight, depth, cm.numMaps);
-            for (int y = top; y <= bot; ++y)
-                fb_put(fb, x, y, shade_gray(pal, cm, kFlatWallIndex, light));
+            int texId = -1;
+            if (tex) {
+                const SidedefRaw* sd = seg_sidedef(m, segIndex);
+                if (sd) texId = tex->find(sd->middle);
+            }
+            for (int y = top; y <= bot; ++y) {
+                uint8_t palIndex = (tex && texId >= 0)
+                    ? texture_sample(tex, m, segIndex, texId, t, y, top, bot)
+                    : kFlatWallIndex;
+                fb_put(fb, x, y, shade_gray(pal, cm, palIndex, light));
+            }
         }
     });
 }
 
 inline void render_subsector(const Map& m, int32_t ssecIndex, float ca, float sa,
                              const Camera& cam, const Palette& pal, const Colormap& cm,
-                             SolidSegs& solid, uint8_t* fb) {
+                             const TextureCache* tex, SolidSegs& solid, uint8_t* fb) {
     const SubsecRaw& ss = m.ssecs[ssecIndex];
     for (int s = 0; s < ss.numSegs; ++s)
-        render_seg(m, ss.firstSeg + s, ca, sa, cam, pal, cm, solid, fb);
+        render_seg(m, ss.firstSeg + s, ca, sa, cam, pal, cm, tex, solid, fb);
 }
 
 // Production renderer. tex == nullptr selects flat-shaded sectors (Unit D);
@@ -161,14 +169,13 @@ inline void render_subsector(const Map& m, int32_t ssecIndex, float ca, float sa
 inline void render_view(const Map& m, const Camera& cam,
                         const Palette& pal, const Colormap& cm,
                         const TextureCache* tex, uint8_t* fb) {
-    (void)tex;   // Unit E consumes this; flat-shaded ignores it.
     fb_clear(fb);
     float ca, sa; cos_sin(cam.angle, ca, sa);
     SolidSegs solid; solidsegs_clear(solid);
     int order[1024];
     int n = bsp_visit_order(m, cam, order, 1024);
     for (int i = 0; i < n; ++i)
-        render_subsector(m, order[i], ca, sa, cam, pal, cm, solid, fb);
+        render_subsector(m, order[i], ca, sa, cam, pal, cm, tex, solid, fb);
 }
 
 } // namespace doom
