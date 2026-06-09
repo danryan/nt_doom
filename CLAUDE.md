@@ -46,12 +46,15 @@ Single Catch2 case: `./build/host/test_doom_render '[render]'` (build first via
 
 - `plugins/games/doom/*.h` is the engine: `wad.h` (clean-room WAD container parse),
   `geom.h` (zero-copy map view over WAD lumps, including the typed `NodeRaw` NODES
-  view), `fb.h` (4-bit framebuffer packing), `render.h` (perspective wall projection +
-  affine texture + distance shading), and the P1 data subsystem: `arena.h` (no-heap
-  DRAM bump allocator), `wad_read.h` (host-testable WAD read-door seam over the WAV
-  smuggle plus a documented `NT_readSampleFrames` device adapter), `palette.h`
-  (PLAYPAL/COLORMAP to 16-level gray: `luma4`, `palette_load`, `colormap_load`,
-  `shade_gray`).
+  view and the P2 `seg_sidedef`/`seg_sector`/`seg_is_one_sided` resolvers), `fb.h`
+  (4-bit framebuffer packing), `render.h` (the P2 production BSP renderer:
+  `point_on_side`, `bsp_visit_order`, the `SolidSegs` occlusion clip, `light_row`, and
+  the 6-arg `render_view(m, cam, pal, cm, tex, fb)`), `texture.h` (P2 `TextureCache`:
+  TEXTURE1/PNAMES/patch parse and lazy column-major composition into the DRAM arena,
+  `texture_sample`/`wall_u`), and the P1 data subsystem: `arena.h` (no-heap DRAM bump
+  allocator), `wad_read.h` (host-testable WAD read-door seam over the WAV smuggle plus a
+  documented `NT_readSampleFrames` device adapter), `palette.h` (PLAYPAL/COLORMAP to
+  16-level gray: `luma4`, `palette_load`, `colormap_load`, `shade_gray`).
 - `plugins/games/doom_core_spike.cpp` is the non-interactive renderer-core plug-in
   (GUID `DmSc`), built by the `BUILD_GAME` Makefile macro.
 - `plugins/probes/` holds the hardware probes: `wad_read_probe.cpp` (GUID `WdRd`, the
@@ -76,6 +79,43 @@ Single Catch2 case: `./build/host/test_doom_render '[render]'` (build first via
 - Code: the renderer core is about 2.4 KB `.text`, far under the ~82 KB per-`.o`
   cap. Keep each plug-in under that cap; there is no code offload to DRAM (the
   loader ignores non-canonical executable sections).
+
+## P2 BSP renderer (host-tested, hardware smoke pending)
+
+The P2 renderer replaces the single-subsector spike with a real BSP walk plus
+solid-seg occlusion and perspective textured walls. Durable lessons:
+
+- `point_on_side` uses Doom `R_PointOnSide`: `cross = dx*(cy-y) - dy*(cx-x)`, then
+  `cross < 0 ? 0 : 1`. Side 0 is front/right, side 1 is back/left. The near child is
+  `child[side]`, the far child `child[side ^ 1]`. Sanity check: a camera to the left of
+  an upward partition (`dx=0, dy>0`) returns side 1.
+- `bsp_visit_order` is a PURE enumerator (fills a subsector-index array front-to-back),
+  separate from drawing, so traversal order is host-testable without a framebuffer. It
+  has a depth guard (`depth > numNodes`) that cuts cyclic or malformed NODES so the
+  renderer never hangs, and a `numNodes == 0` fallback that lists all subsectors.
+- P2 render tests drive `build_bsp_test_wad` ONLY. `build_test_wad`'s NODES record is a
+  parse-only CYCLE (`child[1]` points back at node 0); it is safe to enumerate (the
+  depth guard bounds it) but must never be the geometry under a pixel test. Keep
+  `build_test_wad` parse-only so the P1 `test_geom_nodes` asserts stay valid.
+- `SolidSegs` is a fixed `kMaxClip = 64` array of inclusive occluded column ranges,
+  sorted and coalescing adjacent ranges (gap of 1 merges). `solidsegs_clip_solid` emits
+  the visible gaps via a `DrawSpan` callback then marks the span occluded; front-to-back
+  order makes each column drawn once. Overflow past 64 ranges is silently dropped (fine
+  for BSP-ordered input, which coalesces rather than fragments).
+- `TextureCache::get` is `const` via `mutable entries[]`/`composed[]` so the renderer can
+  take a `const TextureCache*`. Composition is lazy into the arena and memoized.
+  `wall_u` uses Manhattan wall length (`adx + ady`) to stay libm-free; exact for the
+  axis-aligned synthetic walls. Patch column format is
+  `topdelta,length,pad,Npx,pad,0xFF`; advance `col += 3 + length + 1`, pixels at
+  `col + 3`.
+- Two-sided segs are drawn as solid full-height walls in P2 (portals, openings, sky are
+  deferred to P5). The synthetic test map is one-sided only; two-sided-as-solid is an
+  E1M1-only behavior verified on the device smoke test, not by host pixel tests.
+- `.text` with textures is about 4.3 KB (4368 B), far under the cap; the texture
+  scope-down lever was NOT needed. `doom_core_spike` now carries a 256 KB `arenaMem`
+  member, so `sizeof(_doomSpike)` is ~263 KB. Per the SRAM-cache hazard below, the
+  device needs a reboot after the first deploy of this build before
+  `calculateRequirements` re-reads the enlarged struct.
 
 ## NT plug-in build mechanics
 
