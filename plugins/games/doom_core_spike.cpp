@@ -138,16 +138,20 @@ _NT_algorithm* construct(const _NT_algorithmMemoryPtrs& ptrs, const _NT_algorith
     a->postDraw = 0;
 
     // Fallback so ADD always renders: parse the embedded synthetic WAD (rodata bytes, no
-    // read) and compose its textures into the arena. The synthetic WAD has no BLOCKMAP, so
-    // collision is inert until the real WAD parses.
+    // read) for a FLAT render. We deliberately do NOT compose textures here: the synthetic
+    // PWALL renders near-black anyway (low palette indices on a gray-ramp palette), and
+    // composing at construct time would write into the DRAM arena before the grant is
+    // proven live (DRAM size is cached at scan time), which hard-faults on add. Textures
+    // turn on only after the real WAD loads into a confirmed arena. The synthetic WAD has
+    // no BLOCKMAP, so collision is inert until then.
     doom::arena_init(a->arena, a->dram, a->dramBytes);
     doom::Wad w;
     if (doom::wad_open(kDoomBspTestWad, kDoomBspTestWadLen, w)) {
         doom::map_load(w, "E1M1", a->map);
         doom::palette_load(w, a->pal);
         doom::colormap_load(w, a->cm);
-        a->texReady = doom::texcache_init(a->tex, w, a->arena);
     }
+    a->texReady = false;
     return a;
 }
 
@@ -188,8 +192,9 @@ void step(_NT_algorithm* self, float* busFrames, int numFramesBy4) {
         --a->postDraw;
     }
 
-    // One-shot real-WAD locate and async read (dynamic frame count).
-    if (!a->scanned && NT_isSdCardMounted()) {
+    // One-shot real-WAD locate and async read (dynamic frame count). Guarded on a live
+    // DRAM grant: issuing the read to a null dst, or composing into a null arena, faults.
+    if (!a->scanned && a->dram && a->dramBytes >= 64 * 1024 && NT_isSdCardMounted()) {
         a->scanned = true;
         int nf = (int)NT_getNumSampleFolders();
         for (int f = 0; f < nf && a->foundFolder < 0; ++f) {
@@ -197,7 +202,8 @@ void step(_NT_algorithm* self, float* busFrames, int numFramesBy4) {
             int nfiles = (int)finfo.numSampleFiles;
             for (int s = 0; s < nfiles; ++s) {
                 _NT_wavInfo info; NT_getSampleFileInfo((uint32_t)f, (uint32_t)s, info);
-                if (info.bits == kNT_WavBits16 && name_has(info.name, "DOOM1")) {
+                if (info.bits == kNT_WavBits16 &&
+                    (name_has(info.name, "DOOM1") || name_has(info.name, "E1M1"))) {
                     a->foundFolder = f; a->foundSample = s;
                     a->wadFrames = info.numFrames;
                     if (a->wadFrames * 2 > a->dramBytes) a->wadFrames = a->dramBytes / 2;
