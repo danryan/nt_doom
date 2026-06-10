@@ -173,6 +173,10 @@ build/host/test_things: harness/tests/test_things.cpp harness/tools/wad_build.h 
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_things.cpp $(HARNESS_SRCS)
 
+build/host/test_sprite: harness/tests/test_sprite.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/arena.h plugins/games/doom/sprite.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_sprite.cpp $(HARNESS_SRCS)
+
 build/host/wav_wrap: harness/tools/wav_wrap.cpp harness/tools/wav_wrap.h
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tools/wav_wrap.cpp
@@ -191,7 +195,8 @@ host: build/host/test_wav_wrap build/host/test_wad build/host/test_doom_render \
       build/host/test_palette build/host/test_arena build/host/test_wad_read \
       build/host/test_geom_nodes build/host/test_bsp_map build/host/test_bsp_traverse \
       build/host/test_texture build/host/test_blockmap build/host/test_movement \
-      build/host/test_input build/host/test_collision build/host/test_things
+      build/host/test_input build/host/test_collision build/host/test_things \
+      build/host/test_sprite
 
 test: host
 	./build/host/test_wav_wrap
@@ -209,6 +214,7 @@ test: host
 	./build/host/test_input
 	./build/host/test_collision
 	./build/host/test_things
+	./build/host/test_sprite
 
 # ---------------------------------------------------------------------------
 # Hardware deploy over USB-MIDI sysex (NT firmware v1.13+).
