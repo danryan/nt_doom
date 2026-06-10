@@ -255,6 +255,74 @@ mismatch the host could not reproduce. Lessons, most load-bearing first:
   multi-MB WAD WAV is fine; place it via SD-card-direct (pull the card to a laptop), since a
   4 MB sysex upload is 512-byte ACK'd chunks and takes minutes.
 
+## P4 things and combat (host-tested; hardware smoke pending)
+
+P4 renders map things as camera-facing billboard sprites over real E1M1, occluded behind
+walls by a per-column wall depth buffer, and wires the fire gate to a hitscan that registers
+a hit on the nearest thing in front. New engine modules and durable lessons:
+
+- New modules: `sprite.h` (the `SpriteCache`: `S_START`/`S_END` lump index, `sprite_find`,
+  column-major `sprite_get` composition into the arena), `combat.h` (the clean-room
+  thing-type to sprite-name table `thing_sprite_name`, the libm-free `ray_seg_t`, and the
+  wall-blocked `hitscan_nearest`). Extended: `geom.h` (the `ThingRaw` THINGS view,
+  `m.things`/`m.numThings`, parsed optionally in `map_load` like NODES; absent THINGS is
+  non-fatal), `render.h` (the per-column depth buffer, `sprite_column_visible`, billboard
+  `project_thing`, the rotation octant, and `render_things`), `wad_build.h`
+  (`build_things_test_wad`).
+- Depth buffer is a default-off seam: `render_view(m, cam, pal, cm, tex, fb, float* depthOut
+  = nullptr)`. When non-null, `render_seg` writes the per-column wall depth it already
+  computes; columns with no wall stay `kFarDepth`. The default `nullptr` keeps every P2/P3
+  caller and pixel test byte-for-byte unchanged. A sprite column draws only where
+  `sprite_column_visible(spriteDepth, depthBuf[x])` (strictly nearer than the wall). Because
+  the BSP walk is front-to-back and `SolidSegs` draws each column once by the nearest seg,
+  `depthBuf[x]` is the nearest wall depth for free.
+- THINGS angle is in DEGREES (0..359, usually multiples of 45), but `cos_sin` wants RADIANS:
+  `render_things` converts with `kDeg2Rad` before `sprite_rotation`. The synthetic fixture
+  uses a thing at angle 0 (0 degrees == 0 radians), so the angle-0 case MASKS a missing
+  conversion; only a non-zero-facing real E1M1 monster would expose it. This was caught by
+  the spec's per-entry verification, not by a host test. Rotation 1 is the front (thing faces
+  the viewer), rotation 5 the back; the octant is a libm-free 8-way compass over the
+  player-to-thing vector transformed into the thing's local frame.
+- Sprite transparency uses a sentinel: `sprite_get` initializes the composed buffer to
+  `kSpriteGap = 0xFF` and `tex_blit_patch` writes only covered post pixels, so gaps stay
+  transparent and are skipped at draw. Limitation: a sprite pixel whose real palette index is
+  `0xFF` is dropped (rare, accepted for P4). `kMaxSprites = 128` gives E1M1 headroom
+  (~52 referenced rotation lumps).
+- SYNTHETIC SPRITE BRIGHTNESS gotcha (same family as the PWALL gray-ramp artifact): the test
+  sprite `BAR1A0` first used pixel values 1..32, which are LOW palette indices on the test
+  WAD's gray-ramp PLAYPAL; `shade_gray` plus depth darkening renders them gray 0 (black), so
+  the "sprite is lit" pixel assertion failed even though the sprite drew. Fix: give the
+  synthetic sprite BRIGHT pixel values (200..231) so the shaded result is non-zero. Real
+  `DOOM1.WAD` sprites have a real palette and render fine; this is a synthetic-data artifact,
+  surfaced only by a render pixel test.
+- WAD LIFETIME hazard (would fault on device, never on host): `SpriteCache::wad` is
+  dereferenced by `sprite_find` at DRAW time (to read sprite-lump names for rotation
+  selection). `swapRealWad` must open the WAD into an INSTANCE member (`a->wad`), not a stack
+  local, or the cache's `wad` pointer dangles after the swap returns and faults on the next
+  draw. (`TextureCache::wad` survives the same pattern only by accident, because its draw
+  path never derefs `wad` after the up-front compose; P4 points it at `a->wad` too to remove
+  the latent fragility.) The `Wad` struct's `base`/`dir` point into the arena, so the copy
+  stays valid until the next load resets the arena.
+- Stack discipline (the P3 lesson, reapplied): the new draw-path scratch is instance members,
+  NOT draw/step stack locals. `depthBuf[256]` (1 KB) and `thingOrder[256]` live in the
+  instance struct. All sprites are pre-composed in `swapRealWad` (step context), so
+  `draw()`'s `sprite_get` only returns cached columns (lazy composition mid-draw would deepen
+  the tight draw stack, like the texture lesson).
+- Hitscan is a pure resolver: nearest drawable thing whose bounding circle the unit-length
+  aim ray crosses with `tc > 0` (in front), rejected if beyond the nearest solid-wall hit
+  (`ray_seg_t` over the BLOCKMAP-broadphase solid lines). An absent BLOCKMAP means no wall
+  block. The rising-edge fire debounce (`prevFire`) lives in `step`, not the resolver, so one
+  trigger fires one shot. The hit is a transient counter (`hitCount`/`hitThing`); death and
+  removal are P5.
+- Reboot rule for this build: `numParameters` is UNCHANGED (no new parameters), so no
+  param-count reboot is needed for the params to appear. But the SRAM instance struct GREW
+  (the `SpriteCache`, the retained `Wad`, `depthBuf` 1 KB, `thingOrder`), and
+  `calculateRequirements` caches `req.sram` at scan time, so the device still needs a REBOOT
+  (`0x7F`) before the enlarged struct is allocated; the `deploy-sysex` rescan alone is not
+  enough. DRAM stays 8 MB (unchanged).
+- `.text` with sprites and hitscan is about 11.9 KB (0x2908 + 0x598), far under the ~82 KB
+  cap. ARM symbols unchanged from P3 (only the firmware-resolved set).
+
 ## NT plug-in build mechanics
 
 - Plug-ins are `-fPIC`. The firmware applies relocations at on-device link time and
