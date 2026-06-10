@@ -101,7 +101,7 @@ static const _NT_parameter parameters[] = {
     { .name = "Turn spd",  .min = 0, .max = 628,  .def = 200, .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
     { .name = "Strafe spd",.min = 0, .max = 1000, .def = 200, .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
     { .name = "Radius",    .min = 1, .max = 64,   .def = 16,  .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
-    { .name = "Deadzone",  .min = 0, .max = 200,  .def = 10,  .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
+    { .name = "Deadzone",  .min = 0, .max = 500,  .def = 100, .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
     { .name = "Fwd bus",   .min = 1, .max = 28,   .def = 1,   .unit = kNT_unitCvInput, .scaling = 0, .enumStrings = nullptr },
     { .name = "Turn bus",  .min = 1, .max = 28,   .def = 2,   .unit = kNT_unitCvInput, .scaling = 0, .enumStrings = nullptr },
     { .name = "Strafe bus",.min = 1, .max = 28,   .def = 3,   .unit = kNT_unitCvInput, .scaling = 0, .enumStrings = nullptr },
