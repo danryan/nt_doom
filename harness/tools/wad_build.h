@@ -342,3 +342,156 @@ inline std::vector<uint8_t> build_bsp_test_wad() {
     out[dirOffsetPos+2] = (dirStart>>16)&0xFF; out[dirOffsetPos+3] = (dirStart>>24)&0xFF;
     return out;
 }
+
+// Builds a valid IWAD for the P4 things/combat tests: the build_bsp_test_wad geometry
+// (near wall x=100, far wall x=300, one acyclic node, gray-ramp PLAYPAL/COLORMAP,
+// TEXTURE1/PNAMES/PWALL) plus a barrel THING (type 2035) at (200,0) between the walls in
+// depth, and a sprite-lump set between S_START/S_END: BAR1A0 (single-rotation, the depth/
+// projection fixture) and POSSA2A8 (a mirror-pair name, the rotation-decode fixture).
+inline std::vector<uint8_t> build_things_test_wad() {
+    using namespace wadbuild;
+    std::vector<Lump> lumps;
+    auto add = [&](const char* nm, std::vector<uint8_t> d) {
+        Lump L; memset(L.name, 0, 8);
+        for (int i = 0; i < 8 && nm[i]; ++i) L.name[i] = nm[i];
+        L.data = std::move(d); lumps.push_back(std::move(L));
+    };
+
+    add("E1M1", {});
+
+    // THINGS: player-1 start at (0,0) and a barrel (type 2035) at (200,0), both facing 0.
+    { std::vector<uint8_t> d;
+      w16(d,0); w16(d,0); w16(d,0); w16(d,1); w16(d,7);          // player 1
+      w16(d,200); w16(d,0); w16(d,0); w16(d,2035); w16(d,7);     // barrel
+      add("THINGS", d); }
+
+    // VERTEXES: near wall v0,v1 at x=100; far wall v2,v3 at x=300.
+    { std::vector<uint8_t> d;
+      int16_t xs[4]={100,100,300,300}, ys[4]={-40,40,-200,200};
+      for (int i=0;i<4;++i){ w16(d,xs[i]); w16(d,ys[i]); } add("VERTEXES", d); }
+
+    // LINEDEFS: two one-sided lines.
+    { std::vector<uint8_t> d;
+      w16(d,0); w16(d,1); w16(d,1); w16(d,0); w16(d,0); w16(d,0); w16(d,(int16_t)0xFFFF);
+      w16(d,2); w16(d,3); w16(d,1); w16(d,0); w16(d,0); w16(d,1); w16(d,(int16_t)0xFFFF);
+      add("LINEDEFS", d); }
+
+    // SIDEDEFS: side0->sector0, side1->sector1, middle "WALL".
+    { std::vector<uint8_t> d;
+      w16(d,0); w16(d,0); name8(d,"-"); name8(d,"-"); name8(d,"WALL"); w16(d,0);
+      w16(d,0); w16(d,0); name8(d,"-"); name8(d,"-"); name8(d,"WALL"); w16(d,1);
+      add("SIDEDEFS", d); }
+
+    // SEGS: seg0=near (line0), seg1=far (line1).
+    { std::vector<uint8_t> d;
+      w16(d,0); w16(d,1); w16(d,0); w16(d,0); w16(d,0); w16(d,0);
+      w16(d,2); w16(d,3); w16(d,0); w16(d,1); w16(d,0); w16(d,0);
+      add("SEGS", d); }
+
+    // SSECTORS: ssec0=near (1 seg from 0), ssec1=far (1 seg from 1).
+    { std::vector<uint8_t> d; w16(d,1); w16(d,0); w16(d,1); w16(d,1); add("SSECTORS", d); }
+
+    // NODES: partition x=200, dir (0,100). child[0]=far ssec1, child[1]=near ssec0.
+    { std::vector<uint8_t> d;
+      w16(d,200); w16(d,0); w16(d,0); w16(d,100);
+      int16_t bb[2][4] = {{200,-200,300,300},{40,-40,100,100}};
+      for (int c=0;c<2;++c) for (int k=0;k<4;++k) w16(d,bb[c][k]);
+      w16(d,(int16_t)(0x8000|1)); w16(d,(int16_t)(0x8000|0));
+      add("NODES", d); }
+
+    // SECTORS: near brighter than far.
+    { std::vector<uint8_t> d;
+      w16(d,0); w16(d,128); name8(d,"FLAT"); name8(d,"FLAT"); w16(d,224); w16(d,0); w16(d,0);
+      w16(d,0); w16(d,128); name8(d,"FLAT"); name8(d,"FLAT"); w16(d,160); w16(d,0); w16(d,0);
+      add("SECTORS", d); }
+
+    // PLAYPAL: gray ramp, entry i = (i,i,i).
+    { std::vector<uint8_t> d;
+      for (int i=0;i<256;++i){ d.push_back((uint8_t)i); d.push_back((uint8_t)i); d.push_back((uint8_t)i); }
+      add("PLAYPAL", d); }
+
+    // COLORMAP: 34 maps, map[m][i] = i*(33-m)/33.
+    { std::vector<uint8_t> d;
+      for (int m=0;m<34;++m) for (int i=0;i<256;++i) d.push_back((uint8_t)((i*(33-m))/33));
+      add("COLORMAP", d); }
+
+    // PNAMES: one patch name PWALL.
+    { std::vector<uint8_t> d;
+      auto o32=[&](int32_t x){ d.push_back(x&0xFF); d.push_back((x>>8)&0xFF); d.push_back((x>>16)&0xFF); d.push_back((x>>24)&0xFF); };
+      o32(1); name8(d,"PWALL"); add("PNAMES", d); }
+
+    // TEXTURE1: one 16x16 texture WALL from patch 0 (PWALL) at origin (0,0).
+    { std::vector<uint8_t> d;
+      auto o32=[&](int32_t x){ d.push_back(x&0xFF); d.push_back((x>>8)&0xFF); d.push_back((x>>16)&0xFF); d.push_back((x>>24)&0xFF); };
+      o32(1); o32(4 + 4);
+      name8(d,"WALL"); o32(0); w16(d,16); w16(d,16); o32(0); w16(d,1);
+      w16(d,0); w16(d,0); w16(d,0); w16(d,0); w16(d,0);
+      add("TEXTURE1", d); }
+
+    // PWALL: 16x16 patch, pixel[row] = row (0..15).
+    { std::vector<uint8_t> d;
+      auto o32=[&](int32_t x){ d.push_back(x&0xFF); d.push_back((x>>8)&0xFF); d.push_back((x>>16)&0xFF); d.push_back((x>>24)&0xFF); };
+      w16(d,16); w16(d,16); w16(d,0); w16(d,0);
+      int32_t colStart = 8 + 16*4;
+      int32_t colBytes = 1+1+1+16+1+1;
+      for (int c=0;c<16;++c) o32(colStart + c*colBytes);
+      for (int c=0;c<16;++c) {
+          d.push_back(0); d.push_back(16); d.push_back(0);
+          for (int row=0;row<16;++row) d.push_back((uint8_t)row);
+          d.push_back(0); d.push_back(0xFF);
+      }
+      add("PWALL", d); }
+
+    // Sprite marker block. BAR1A0: 16x32 patch, left=8, top=32; every column a full 32px
+    // post with pixel[row] = row+1 (1..32, never the 0xFF transparent sentinel). POSSA2A8:
+    // a mirror-pair name (rotations 2 and 8), 8x8, opaque, for the name-decode test.
+    add("S_START", {});
+    { std::vector<uint8_t> d;
+      auto o32=[&](int32_t x){ d.push_back(x&0xFF); d.push_back((x>>8)&0xFF); d.push_back((x>>16)&0xFF); d.push_back((x>>24)&0xFF); };
+      w16(d,16); w16(d,32); w16(d,8); w16(d,32);            // width,height,left,top
+      int32_t colStart = 8 + 16*4;
+      int32_t colBytes = 1+1+1+32+1+1;                      // topdelta,length,pad,32px,pad,0xFF
+      for (int c=0;c<16;++c) o32(colStart + c*colBytes);
+      for (int c=0;c<16;++c) {
+          d.push_back(0); d.push_back(32); d.push_back(0);
+          for (int row=0;row<32;++row) d.push_back((uint8_t)(row + 1));
+          d.push_back(0); d.push_back(0xFF);
+      }
+      add("BAR1A0", d); }
+    { std::vector<uint8_t> d;
+      auto o32=[&](int32_t x){ d.push_back(x&0xFF); d.push_back((x>>8)&0xFF); d.push_back((x>>16)&0xFF); d.push_back((x>>24)&0xFF); };
+      w16(d,8); w16(d,8); w16(d,4); w16(d,8);               // width,height,left,top
+      int32_t colStart = 8 + 8*4;
+      int32_t colBytes = 1+1+1+8+1+1;                       // topdelta,length,pad,8px,pad,0xFF
+      for (int c=0;c<8;++c) o32(colStart + c*colBytes);
+      for (int c=0;c<8;++c) {
+          d.push_back(0); d.push_back(8); d.push_back(0);
+          for (int row=0;row<8;++row) d.push_back((uint8_t)(row + 1));
+          d.push_back(0); d.push_back(0xFF);
+      }
+      add("POSSA2A8", d); }
+    add("S_END", {});
+
+    // Assemble: 12-byte header, lump data, then directory.
+    std::vector<uint8_t> out;
+    auto o32 = [&](std::vector<uint8_t>& v, int32_t x){
+        v.push_back(x & 0xFF); v.push_back((x>>8)&0xFF); v.push_back((x>>16)&0xFF); v.push_back((x>>24)&0xFF); };
+    out.push_back('I'); out.push_back('W'); out.push_back('A'); out.push_back('D');
+    o32(out, (int32_t)lumps.size());
+    int32_t dirOffsetPos = (int32_t)out.size();
+    o32(out, 0);
+    std::vector<std::pair<int32_t,int32_t>> dir;
+    for (auto& L : lumps) {
+        int32_t pos = (int32_t)out.size();
+        out.insert(out.end(), L.data.begin(), L.data.end());
+        dir.push_back({pos, (int32_t)L.data.size()});
+    }
+    int32_t dirStart = (int32_t)out.size();
+    for (size_t i = 0; i < lumps.size(); ++i) {
+        o32(out, dir[i].first); o32(out, dir[i].second);
+        out.insert(out.end(), lumps[i].name, lumps[i].name + 8);
+    }
+    out[dirOffsetPos+0] = dirStart & 0xFF; out[dirOffsetPos+1] = (dirStart>>8)&0xFF;
+    out[dirOffsetPos+2] = (dirStart>>16)&0xFF; out[dirOffsetPos+3] = (dirStart>>24)&0xFF;
+    return out;
+}
