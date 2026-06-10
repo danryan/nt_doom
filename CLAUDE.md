@@ -135,9 +135,14 @@ solid-seg occlusion and perspective textured walls. Durable lessons:
   real `DOOM1.WAD` with real textures and palette renders visible textured walls. The
   engine is correct; this is a synthetic-data artifact.
 
-## P3 player movement, collision, controls, real-WAD load (host-tested, hardware smoke pending)
+## P3 player movement, collision, controls, real-WAD load (host-tested, hardware smoke PASS)
 
-P3 makes the camera a player against real geometry. Durable lessons:
+P3 makes the camera a player against real geometry. On-device smoke PASSED: a real
+`DOOM1.WAD` loads via the read door (sample-picker selected), real E1M1 renders with real
+textures and palette, CV and front-panel controls drive the player, and collision holds
+against walls. Floors/ceilings (visplanes), proper two-sided/upper-lower texturing, and
+sky stay deferred to P4/P5, so on E1M1 only one-sided walls show texture and there is no
+floor/ceiling; that is the documented P3 scope, not a defect. Durable lessons:
 
 - New engine modules: `movement.h` (pure tank-scheme integrator: `turn_angle`,
   `move_delta`, `integrate` over `Pose`/`Intent`/`MoveTuning`), `input.h` (`cv_lowpass`,
@@ -148,8 +153,15 @@ P3 makes the camera a player against real geometry. Durable lessons:
 - Tank control scheme (CV maps to velocity, never position): CV1 forward along the
   heading, CV2 turn rate (heading is integrated, so a raycaster's facing is free), CV3
   strafe along the perpendicular, CV4 fire gate. Per axis: lowpass (single-pole IIR) then
-  deadzone plus normalize plus squared taper, sign-preserving and libm-free. Read CV once
-  per `step` block, not at audio rate; advance by `dt = numFrames / sampleRate`.
+  deadzone plus normalize plus a CUBIC taper, sign-preserving and libm-free. Cubic (not
+  squared) plus a 1 V default deadzone feels right for manual CV control: low voltages
+  crawl, high voltages ramp to full, and a resting source does not drift. Read CV once per
+  `step` block, not at audio rate; advance by `dt = numFrames / sampleRate`.
+- CV INPUT ROUTING: a bus-selector parameter that reads `busFrames` MUST be declared
+  `kNT_unitCvInput` (the vendor `NT_PARAMETER_CV_INPUT` unit), not `kNT_unitNone`. The
+  firmware only routes a physical input onto `busFrames` for buses an algorithm CLAIMS via
+  a CV-input parameter; with `kNT_unitNone` the read returns all-zero and no input works.
+  Read the bus with `busFrames[(v[busParam]-1) * numFrames + 0]` (param value is 1-based).
 - BLOCKMAP format: header `originX, originY, cols, rows` (int16); then `cols*rows` uint16
   word offsets (int16 units from the lump start) to per-cell blocklists; each blocklist is
   a leading `0x0000` word, a run of uint16 linedef indices, and a `0xFFFF` terminator. Skip
@@ -163,15 +175,18 @@ P3 makes the camera a player against real geometry. Durable lessons:
   within radius, are still allowed). Solid linedef = one-sided (`back == 0xFFFF`) or
   ML_BLOCKING (`flags & 0x0001`). Broadphase: the swept bbox expanded by `radius`, cells
   clamped to the grid.
-- Real-WAD device load reuses the `wad_read_probe` recipe with a DYNAMIC frame count: read
-  `info.numFrames` from `_NT_wavInfo` (the probe's fixed `kWadFrames` was synthetic-only),
-  match the file name substring `DOOM1`, request an 8 MB DRAM grant. On the read callback:
-  `arena_reset`, `arena_alloc(numFrames*2)` to reserve the WAD span at the DRAM base (the
-  read wrote there), then `wad_open`/`map_load`/`palette_load`/`colormap_load`/`texcache_init`
-  into the remaining arena and `blockmap_load`. The embedded synthetic WAD stays as the
-  pre-load fallback (renders flat until the real WAD parses; it has no BLOCKMAP, so
-  collision is inert until then). Texture-arena overflow degrades gracefully (lazy `get()`
-  returns null, that wall renders flat).
+- Real-WAD device load uses a sample-PICKER, not a name scan: `Folder` and `Sample`
+  parameters (`kNT_unitHasStrings`, `parameterString` renders the folder/file names like
+  the built-in sample player) select the WAD WAV; `parameterChanged` sets a load request
+  that `step` services. The firmware's construct-time `parameterChanged` fires auto-load
+  the default selection, so no front-panel nudge is needed and no `alive` gate is required
+  (nothing self-pushes a parameter). The read is async with a DYNAMIC frame count from
+  `_NT_wavInfo::numFrames`, into an 8 MB DRAM grant; on the callback `arena_reset`,
+  `arena_alloc(numFrames*2)` reserves the WAD span at the DRAM base, then `wad_open`/
+  `map_load`/`palette_load`/`colormap_load`/`texcache_init`/`blockmap_load`. The embedded
+  synthetic WAD is the pre-load fallback (rendered FLAT, never composing synthetic textures
+  at construct: the synthetic PWALL is near-black on the gray ramp anyway, and composing at
+  add time would write the arena before the grant is proven and hard-fault).
 - `doom_core_spike` dropped the 256 KB SRAM `arenaMem` member and now runs the arena over
   the 8 MB DRAM grant. Both the SRAM struct size AND the DRAM request changed, so the device
   needs a reboot (`0x7F`) before `calculateRequirements` re-reads either; the rescan alone
@@ -189,8 +204,56 @@ P3 makes the camera a player against real geometry. Durable lessons:
   host test TU defines it with `<cmath>`, and the ARM rodata LUT lives in
   `doom_core_spike.cpp`. Catch2 `Approx` needs the `Catch::` qualifier in this harness
   (`catch_main.cpp` adds no using-directive).
-- `.text` with movement, collision, input, blockmap, `customUi`, and serialise is 7256 B
-  (up from 4372 B), far under the ~82 KB cap.
+- `.text` with movement, collision, input, blockmap, `customUi`, serialise, and the sample
+  picker is about 7.7 KB, far under the ~82 KB cap.
+
+### P3 hardware bring-up (the device-only failures and how they were found)
+
+The engine was correct on the host the entire time; every device fault was an environment
+mismatch the host could not reproduce. Lessons, most load-bearing first:
+
+- STACK OVERFLOW on real maps was the root cause of the whole fault saga. `render_view`
+  held `int order[1024]` (4 KB) as a STACK local; on the NT's small `draw()` stack, the
+  real E1M1 BSP walk (237 subsectors, 236-node tree) overflowed it. It surfaced two ways:
+  a wild-pointer bus-fault (BFAR in the DRAM region past the grant) when the overflow
+  clobbered a local pointer, and a garbage-PC usage fault (`PC=0x2A`, `CFSR=INVSTATE`,
+  `LR=1`) when it clobbered the return address. The synthetic 2-subsector map never tripped
+  it and the host's large stack never reproduced it, so it passed every host test. Fix:
+  make the visit-order buffer `static` (draw is single-threaded). Large scratch arrays
+  belong in `.bss` or instance SRAM, NEVER on the NT draw/step stack.
+- Lazy texture composition deepens the same draw stack: `TextureCache::get()` runs
+  `tex_blit_patch` from inside `render_view->subsector->seg->texture_sample->get`. Compose
+  every texture ONCE up front (in `step`/`swapRealWad`, normal stack) so `draw()`'s `get()`
+  only returns cached entries.
+- The device read was byte-exact all along (no sample-size cap; the NT streams from the
+  card, 4 GB FAT32 limit). The 4 MB `DOOM1.WAD`-as-WAV indexed and read fine. The earlier
+  "corrupt read" theory was wrong; it was always the stack.
+- Defense in depth added regardless: `wad_open` now validates every directory entry
+  (`filePos`/`size` within the data) so a corrupt/truncated read is rejected gracefully,
+  and `render.h`/`geom.h`/`collision.h` bound-check seg/vertex/linedef/subsector indices so
+  bad map data renders partial garbage instead of dereferencing unmapped memory.
+- `real_wad_probe` (host, ASan; `make build/host/real_wad_probe`, needs a local uncommitted
+  WAD path) runs the full device load path: WAV-smuggle round-trip, `wad_open`, `map_load`,
+  compose ALL textures, render, collide, plus a device-exact single-8 MB-arena layout and a
+  truncated-WAD case. It proved the engine correct and isolated the bug to the device-only
+  stack. When "works on host, faults on device", reach for an ASan host harness that
+  replicates the device memory layout, and suspect the small device stack.
+- `numParameters` is part of `calculateRequirements`, cached at scan time, so ADDING or
+  removing a parameter (changing the count) needs a REBOOT (`0x7F`), not just the
+  `deploy-sysex` rescan, or the new params never appear. Param ATTRIBUTE changes (unit,
+  default, min/max, name) take effect on the next ADD with no reboot. The firmware prepends
+  a `Bypass` parameter at UI index 0, but `self->v[]` is indexed by the plug-in's own
+  parameter order (0-based, no Bypass offset).
+- nt_helper over MCP: `add` frequently returns "did not appear" even when it added; verify
+  with a screenshot, not the return. It CANNOT set numeric parameter values over MCP, so
+  Folder/Sample and the speeds are dialed on the front panel. After a reboot the catalog is
+  stale; a structurally-changed plug-in (new param count) needs a FULL nt_helper restart
+  (quit and reopen the app), not just `/mcp reconnect`.
+- NT sample browser realities: it enumerates leaf sample folders under `/samples` as
+  flattened paths (`00 Kits/2600/BD`); a flat `Folder` index over a big library needs a
+  high `max` or a first-sorting folder name (e.g. `!doom`, valid on exFAT/FAT32). A
+  multi-MB WAD WAV is fine; place it via SD-card-direct (pull the card to a laptop), since a
+  4 MB sysex upload is 512-byte ACK'd chunks and takes minutes.
 
 ## NT plug-in build mechanics
 
