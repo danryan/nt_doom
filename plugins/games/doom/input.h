@@ -14,7 +14,9 @@ inline float cv_to_norm(float v, float dz, float vmax) {
     float s = (v < 0.0f) ? -1.0f : 1.0f;
     float m = (v < 0.0f ? -v : v) - dz;
     if (m <= 0.0f) return 0.0f;
-    float n = m / (vmax - dz);
+    float denom = vmax - dz;
+    if (denom <= 0.0f) return s;          // deadzone >= full scale: saturate past it
+    float n = m / denom;
     if (n > 1.0f) n = 1.0f;
     return s * n * n * n;   // cubic taper: gentle near center, steep toward full scale
 }

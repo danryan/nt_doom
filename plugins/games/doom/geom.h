@@ -60,6 +60,7 @@ inline bool map_load(const Wad& w, const char* mapName, Map& m) {
 }
 
 inline int16_t seg_sidedef_index(const Map& m, int32_t segIndex) {
+    if (segIndex < 0 || segIndex >= m.numSegs) return (int16_t)0xFFFF;
     const SegRaw& s = m.segs[segIndex];
     if ((uint16_t)s.linedef >= (uint16_t)m.numLines) return (int16_t)0xFFFF;
     const LinedefRaw& ld = m.lines[s.linedef];
@@ -76,6 +77,7 @@ inline const SectorRaw* seg_sector(const Map& m, int32_t segIndex) {
     return &m.sectors[sd->sector];
 }
 inline bool seg_is_one_sided(const Map& m, int32_t segIndex) {
+    if (segIndex < 0 || segIndex >= m.numSegs) return true;
     int32_t ld = m.segs[segIndex].linedef;
     if ((uint16_t)ld >= (uint16_t)m.numLines) return true;
     return (uint16_t)m.lines[ld].back == 0xFFFFu;

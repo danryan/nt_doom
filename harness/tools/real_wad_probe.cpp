@@ -24,7 +24,7 @@
 #include "../../plugins/games/doom/fb.h"
 #include "wav_wrap.h"
 
-namespace doom { void cos_sin(float a, float& c, float& s) { c = std::cosf(a); s = std::sinf(a); } }
+namespace doom { void cos_sin(float a, float& c, float& s) { c = std::cos(a); s = std::sin(a); } }
 
 static std::vector<uint8_t> read_file(const char* path) {
     FILE* f = fopen(path, "rb");
