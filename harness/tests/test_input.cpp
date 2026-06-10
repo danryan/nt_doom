@@ -8,7 +8,7 @@
 TEST_CASE("cv_to_norm rejects the deadzone and preserves sign", "[input]") {
     REQUIRE(doom::cv_to_norm(0.05f, 0.1f, 1.0f) == Catch::Approx(0.0f));   // inside deadzone
     REQUIRE(doom::cv_to_norm(0.0f, 0.1f, 1.0f) == Catch::Approx(0.0f));
-    REQUIRE(doom::cv_to_norm(-0.5f, 0.0f, 1.0f) == Catch::Approx(-0.25f)); // sign preserved
+    REQUIRE(doom::cv_to_norm(-0.5f, 0.0f, 1.0f) == Catch::Approx(-0.125f)); // sign preserved (cubic)
 }
 
 TEST_CASE("cv_to_norm clamps at full scale", "[input]") {
@@ -17,10 +17,12 @@ TEST_CASE("cv_to_norm clamps at full scale", "[input]") {
     REQUIRE(doom::cv_to_norm(-9.0f, 0.0f, 1.0f) == Catch::Approx(-1.0f));
 }
 
-TEST_CASE("cv_to_norm applies a squared taper below full scale", "[input]") {
-    // Half of full scale maps to 0.25, below the linear 0.5: fine low-speed control.
-    REQUIRE(doom::cv_to_norm(0.5f, 0.0f, 1.0f) == Catch::Approx(0.25f));
+TEST_CASE("cv_to_norm applies a cubic taper below full scale", "[input]") {
+    // Half of full scale maps to 0.125, well below the linear 0.5: fine low-speed control.
+    REQUIRE(doom::cv_to_norm(0.5f, 0.0f, 1.0f) == Catch::Approx(0.125f));
     REQUIRE(doom::cv_to_norm(0.5f, 0.0f, 1.0f) < 0.5f);
+    REQUIRE(doom::cv_to_norm(1.0f, 0.0f, 1.0f) == Catch::Approx(1.0f));   // still full at max
+    REQUIRE(doom::cv_to_norm(-0.5f, 0.0f, 1.0f) == Catch::Approx(-0.125f)); // sign preserved
 }
 
 TEST_CASE("cv_lowpass converges monotonically toward the input", "[input]") {

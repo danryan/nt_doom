@@ -8,15 +8,15 @@ namespace doom {
 inline float cv_lowpass(float prev, float v, float k) { return prev + (v - prev) * k; }
 
 // Bipolar CV volts to a normalized [-1,1] intent. Deadzone rejects offset/noise near 0 V,
-// the magnitude normalizes to full scale, and the square taper gives fine low-speed
-// control. Sign-preserving and libm-free.
+// the magnitude normalizes to full scale, and a cubic response curve gives fine low-speed
+// control (low voltages move slowly, high voltages ramp up fast). Sign-preserving, libm-free.
 inline float cv_to_norm(float v, float dz, float vmax) {
     float s = (v < 0.0f) ? -1.0f : 1.0f;
     float m = (v < 0.0f ? -v : v) - dz;
     if (m <= 0.0f) return 0.0f;
     float n = m / (vmax - dz);
     if (n > 1.0f) n = 1.0f;
-    return s * n * n;
+    return s * n * n * n;   // cubic taper: gentle near center, steep toward full scale
 }
 
 struct InputConfig {
