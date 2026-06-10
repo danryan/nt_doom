@@ -287,7 +287,7 @@ bool draw(_NT_algorithm* self) {
     // All sprites are pre-composed in swapRealWad, so draw() only reads cached columns.
     if (a->spriteReady)
         doom::render_things(a->map, cam, a->pal, a->cm, &a->sprites, a->depthBuf,
-                            NT_screen, a->thingOrder, kMaxThings, doom::thing_sprite_name);
+                            NT_screen, a->thingOrder, kMaxThings);
     // Center crosshair plus a hit tally (a short bar whose length tracks hitCount).
     for (int x = 126; x <= 130; ++x) doom::fb_put(NT_screen, x, 32, 8);
     for (int y = 30; y <= 34; ++y)   doom::fb_put(NT_screen, 128, y, 8);

@@ -10,8 +10,7 @@
 
 namespace doom { void cos_sin(float a, float& c, float& s) { c = std::cos(a); s = std::sin(a); } }
 
-// Local type-to-sprite resolver for the render test (combat.h's table is built in Task 5).
-static const char* testName(int type) { return type == 2035 ? "BAR1" : nullptr; }
+// render_things resolves drawable types via combat.h's thing_sprite_name (2035 -> BAR1).
 
 TEST_CASE("project_thing centers a straight-ahead thing and scales with depth", "[sprite_render]") {
     doom::Camera cam{0.0f, 0.0f, 0.0f};
@@ -53,7 +52,7 @@ TEST_CASE("render_things draws a sprite in front of a wall and occludes it behin
     SECTION("sprite visible when the wall behind it is farther") {
         for (int i = 0; i < doom::kScreenW; ++i) depth[i] = doom::kFarDepth;  // no wall
         doom::fb_clear(fb);
-        doom::render_things(m, cam, pal, cm, &sc, depth, fb, order, 64, testName);
+        doom::render_things(m, cam, pal, cm, &sc, depth, fb, order, 64);
         // The barrel sprite center is column 128; at least one lit pixel appears near it.
         bool lit = false;
         for (int y = 28; y <= 36 && !lit; ++y)
@@ -63,7 +62,7 @@ TEST_CASE("render_things draws a sprite in front of a wall and occludes it behin
     SECTION("sprite occluded when a nearer wall covers its columns") {
         for (int i = 0; i < doom::kScreenW; ++i) depth[i] = 100.0f;   // wall at depth 100 < 200
         doom::fb_clear(fb);
-        doom::render_things(m, cam, pal, cm, &sc, depth, fb, order, 64, testName);
+        doom::render_things(m, cam, pal, cm, &sc, depth, fb, order, 64);
         bool lit = false;
         for (int y = 0; y < 64 && !lit; ++y)
             for (int x = 120; x <= 136 && !lit; ++x) if (doom::fb_get(fb, x, y) != 0) lit = true;

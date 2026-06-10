@@ -5,6 +5,9 @@
 #include "palette.h"
 #include "texture.h"
 #include "sprite.h"
+#include "combat.h"   // thing_sprite_name, called directly (NOT via a function pointer:
+                      // the firmware PIC loader does not relocate a GOT slot for an
+                      // internal function address, so a function pointer faults on device)
 
 namespace doom {
 
@@ -266,15 +269,14 @@ inline int sprite_rotation(float thingAngle, float toThingDx, float toThingDy) {
     return octant_of(fwd, left) + 1;
 }
 
-typedef const char* (*ThingSpriteFn)(int type);   // null when the type is undrawable
-
 // Draw all drawable things back-to-front, depth-clipped per column. order is caller scratch
-// (static/instance, never a draw-stack local). The type-to-sprite-name resolver is injected
-// so render.h does not depend on combat.h.
+// (static/instance, never a draw-stack local). thing_sprite_name is called directly (a
+// PC-relative branch); passing it as a function pointer would emit a GOT entry for an
+// internal function that the NT firmware loader does not relocate, faulting on device.
 inline void render_things(const Map& m, const Camera& cam, const Palette& pal, const Colormap& cm,
                           const SpriteCache* sc, const float* depthBuf, uint8_t* fb,
-                          int* order, int orderCap, ThingSpriteFn nameFn) {
-    if (!sc || !nameFn || !m.things) return;
+                          int* order, int orderCap) {
+    if (!sc || !m.things) return;
     float ca, sa; cos_sin(cam.angle, ca, sa);
     auto depthOf = [&](int idx) -> float {
         return ((float)m.things[idx].x - cam.x) * ca + ((float)m.things[idx].y - cam.y) * sa;
@@ -282,7 +284,7 @@ inline void render_things(const Map& m, const Camera& cam, const Palette& pal, c
 
     int cnt = 0;
     for (int i = 0; i < m.numThings && cnt < orderCap; ++i) {
-        if (!nameFn(m.things[i].type)) continue;
+        if (!thing_sprite_name(m.things[i].type)) continue;
         if (depthOf(i) <= kNearClip) continue;
         order[cnt++] = i;
     }
@@ -294,7 +296,7 @@ inline void render_things(const Map& m, const Camera& cam, const Palette& pal, c
 
     for (int k = 0; k < cnt; ++k) {
         int i = order[k];
-        const char* nm = nameFn(m.things[i].type);
+        const char* nm = thing_sprite_name(m.things[i].type);
         float tx = (float)m.things[i].x, ty = (float)m.things[i].y;
         int rot = sprite_rotation((float)m.things[i].angle * kDeg2Rad, tx - cam.x, ty - cam.y);
         bool flip = false;

@@ -19,8 +19,10 @@
 #include "../../plugins/games/doom/geom.h"
 #include "../../plugins/games/doom/palette.h"
 #include "../../plugins/games/doom/texture.h"
+#include "../../plugins/games/doom/sprite.h"
 #include "../../plugins/games/doom/render.h"
 #include "../../plugins/games/doom/collision.h"
+#include "../../plugins/games/doom/combat.h"
 #include "../../plugins/games/doom/fb.h"
 #include "wav_wrap.h"
 
@@ -68,11 +70,42 @@ static void exercise(const uint8_t* bytes, uint32_t len, const char* label) {
     printf("  blockmap=%d origin=(%d,%d) cols=%d rows=%d words=%u\n",
            bmok, bm.originX, bm.originY, bm.cols, bm.rows, bm.words);
 
+    // P4: compose every sprite a drawable thing references (the swapRealWad loop).
+    static doom::SpriteCache sprites; bool spok = doom::spritecache_init(sprites, w, arena);
+    int spcomposed = 0, spnull = 0;
+    if (spok)
+        for (int i = 0; i < m.numThings; ++i) {
+            const char* nm = doom::thing_sprite_name(m.things[i].type);
+            if (!nm) continue;
+            for (int rot = 0; rot <= 8; ++rot) {
+                bool flip; int li = doom::sprite_find(sprites, nm, 'A', rot, flip);
+                if (li >= 0) { if (doom::sprite_get(sprites, li)) ++spcomposed; else ++spnull; }
+            }
+        }
+    printf("  spritecache=%d numThings=%d composed-sprite-lumps=%d (null=%d) cache=%d/%d\n",
+           spok, m.numThings, spcomposed, spnull, sprites.count, doom::kMaxSprites);
+
     static uint8_t fb[128 * 64];
+    static float depthBuf[doom::kScreenW];
     doom::Camera cam{ 1056.0f, -3616.0f, 1.5707963f };
-    doom::render_view(m, cam, pal, cm, tok ? &tex : nullptr, fb);
+    doom::render_view(m, cam, pal, cm, tok ? &tex : nullptr, fb, depthBuf);
     int lit = 0; for (int x = 0; x < 256; ++x) for (int y = 0; y < 64; ++y) if (doom::fb_get(fb, x, y)) ++lit;
     printf("  render_view OK lit-pixels=%d\n", lit);
+
+    // P4: render things depth-clipped (the device draw path), from several view angles so
+    // sprite rotation selection and projection are exercised across octants.
+    static int thingOrder[256];
+    for (int a = 0; a < 8; ++a) {
+        doom::Camera c2{ cam.x, cam.y, (float)a * 0.7853982f };   // 0..315 degrees
+        doom::render_view(m, c2, pal, cm, tok ? &tex : nullptr, fb, depthBuf);
+        doom::render_things(m, c2, pal, cm, &sprites, depthBuf, fb, thingOrder, 256);
+    }
+    printf("  render_things OK (8 angles)\n");
+
+    // P4: hitscan along the facing.
+    float fca, fsa; doom::cos_sin(cam.angle, fca, fsa);
+    int hit = doom::hitscan_nearest(m, bm, cam.x, cam.y, fca, fsa, 2000.0f, 32.0f);
+    printf("  hitscan_nearest=%d\n", hit);
 
     if (bmok) {
         doom::Vec2 p{ cam.x, cam.y };
