@@ -443,8 +443,10 @@ inline std::vector<uint8_t> build_things_test_wad() {
       add("PWALL", d); }
 
     // Sprite marker block. BAR1A0: 16x32 patch, left=8, top=32; every column a full 32px
-    // post with pixel[row] = row+1 (1..32, never the 0xFF transparent sentinel). POSSA2A8:
-    // a mirror-pair name (rotations 2 and 8), 8x8, opaque, for the name-decode test.
+    // post with pixel[row] = 200+row (200..231, distinct per row, never the 0xFF
+    // transparent sentinel). Bright palette indices so the gray-ramp PLAYPAL plus depth
+    // darkening still shade to a non-zero gray (low indices go near-black, like PWALL).
+    // POSSA2A8: a mirror-pair name (rotations 2 and 8), 8x8, opaque, for the name-decode test.
     add("S_START", {});
     { std::vector<uint8_t> d;
       auto o32=[&](int32_t x){ d.push_back(x&0xFF); d.push_back((x>>8)&0xFF); d.push_back((x>>16)&0xFF); d.push_back((x>>24)&0xFF); };
@@ -454,7 +456,7 @@ inline std::vector<uint8_t> build_things_test_wad() {
       for (int c=0;c<16;++c) o32(colStart + c*colBytes);
       for (int c=0;c<16;++c) {
           d.push_back(0); d.push_back(32); d.push_back(0);
-          for (int row=0;row<32;++row) d.push_back((uint8_t)(row + 1));
+          for (int row=0;row<32;++row) d.push_back((uint8_t)(200 + row));
           d.push_back(0); d.push_back(0xFF);
       }
       add("BAR1A0", d); }

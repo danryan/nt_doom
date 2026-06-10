@@ -35,8 +35,8 @@ TEST_CASE("sprite_get composes the patch column-major with a transparent sentine
     REQUIRE(sp->h == 32);
     REQUIRE(sp->left == 8);
     REQUIRE(sp->top == 32);
-    REQUIRE(sp->texels[0 * 32 + 0] == 1);         // column 0, row 0 = pixel value 1
-    REQUIRE(sp->texels[0 * 32 + 31] == 32);       // column 0, row 31 = pixel value 32
+    REQUIRE(sp->texels[0 * 32 + 0] == 200);       // column 0, row 0 = pixel value 200+0
+    REQUIRE(sp->texels[0 * 32 + 31] == 231);      // column 0, row 31 = pixel value 200+31
 }
 
 TEST_CASE("sprite_find matches the mirror pair of an 8-char lump name", "[sprite]") {

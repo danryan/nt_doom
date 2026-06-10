@@ -4,6 +4,7 @@
 #include "fb.h"
 #include "palette.h"
 #include "texture.h"
+#include "sprite.h"
 
 namespace doom {
 
@@ -210,6 +211,122 @@ inline void render_view(const Map& m, const Camera& cam,
     int n = bsp_visit_order(m, cam, order, kMaxVisit);
     for (int i = 0; i < n; ++i)
         render_subsector(m, order[i], ca, sa, cam, pal, cm, tex, solid, fb, depthOut);
+}
+
+// ---------------------------------------------------------------------------
+// Things: camera-facing billboard sprites, depth-clipped against the per-column wall
+// depth buffer written by render_view.
+
+static const float kNearClip    = 1.0f;
+static const float kSpriteScale = kWallScale;   // tie sprite size to the wall projection
+static const int   kSpriteLight = 192;          // nominal sector light for sprite shading
+static const float kDeg2Rad     = 0.017453293f; // THINGS angle is degrees; cos_sin wants radians
+
+struct SpriteProj {
+    bool  visible;          // in front of the near plane
+    float depth;            // camera-space forward distance
+    int   colL, colR;       // inclusive screen column span
+    int   rowTop, rowBot;   // inclusive screen row span
+};
+
+// Project a thing at world (tx,ty) to a screen column/row span, camera-facing. Same camera
+// transform as render_seg; vertical placement centers the sprite on the horizon row (the
+// floor-less P4 view; the patch top offset and feet placement come with visplanes in P5).
+inline SpriteProj project_thing(const Camera& cam, float ca, float sa,
+                                float tx, float ty, int spriteW, int spriteH) {
+    float dx = tx - cam.x, dy = ty - cam.y;
+    float a1 =  dx * ca + dy * sa;        // depth
+    float a2 = -dx * sa + dy * ca;        // lateral
+    if (a1 <= kNearClip) return SpriteProj{false, a1, 0, 0, 0, 0};
+    int colC  = (int)(kScreenW / 2 + (a2 / a1) * kFovScale);
+    float scrW = (float)spriteW * kSpriteScale / a1;
+    float scrH = (float)spriteH * kSpriteScale / a1;
+    int halfW = (int)(scrW / 2), halfH = (int)(scrH / 2);
+    int mid = kScreenH / 2;
+    return SpriteProj{true, a1, colC - halfW, colC + halfW, mid - halfH, mid + halfH};
+}
+
+// Eight-way compass from a 2D vector (libm-free), 0=E,1=NE,2=N,3=NW,4=W,5=SW,6=S,7=SE.
+inline int octant_of(float x, float y) {
+    const float T = 0.41421356f;          // tan(22.5 deg)
+    float ax = x < 0 ? -x : x, ay = y < 0 ? -y : y;
+    if (ay <= ax * T) return x >= 0 ? 0 : 4;   // near the x axis
+    if (ax <= ay * T) return y >= 0 ? 2 : 6;   // near the y axis
+    if (x >= 0) return y >= 0 ? 1 : 7;         // diagonal, +x
+    return y >= 0 ? 3 : 5;                      // diagonal, -x
+}
+
+// Rotation digit 1..8 for viewing a thing of facing thingAngle (radians) from the
+// player-to-thing vector. Front (thing faces the viewer) is rotation 1, back is 5.
+inline int sprite_rotation(float thingAngle, float toThingDx, float toThingDy) {
+    float vx = -toThingDx, vy = -toThingDy;    // thing -> viewer
+    float ca, sa; cos_sin(thingAngle, ca, sa);
+    float fwd  =  vx * ca + vy * sa;           // along the thing's facing
+    float left = -vx * sa + vy * ca;
+    return octant_of(fwd, left) + 1;
+}
+
+typedef const char* (*ThingSpriteFn)(int type);   // null when the type is undrawable
+
+// Draw all drawable things back-to-front, depth-clipped per column. order is caller scratch
+// (static/instance, never a draw-stack local). The type-to-sprite-name resolver is injected
+// so render.h does not depend on combat.h.
+inline void render_things(const Map& m, const Camera& cam, const Palette& pal, const Colormap& cm,
+                          const SpriteCache* sc, const float* depthBuf, uint8_t* fb,
+                          int* order, int orderCap, ThingSpriteFn nameFn) {
+    if (!sc || !nameFn || !m.things) return;
+    float ca, sa; cos_sin(cam.angle, ca, sa);
+    auto depthOf = [&](int idx) -> float {
+        return ((float)m.things[idx].x - cam.x) * ca + ((float)m.things[idx].y - cam.y) * sa;
+    };
+
+    int cnt = 0;
+    for (int i = 0; i < m.numThings && cnt < orderCap; ++i) {
+        if (!nameFn(m.things[i].type)) continue;
+        if (depthOf(i) <= kNearClip) continue;
+        order[cnt++] = i;
+    }
+    for (int i = 1; i < cnt; ++i) {            // insertion sort, far-first (descending depth)
+        int key = order[i]; float kd = depthOf(key); int j = i - 1;
+        while (j >= 0 && depthOf(order[j]) < kd) { order[j + 1] = order[j]; --j; }
+        order[j + 1] = key;
+    }
+
+    for (int k = 0; k < cnt; ++k) {
+        int i = order[k];
+        const char* nm = nameFn(m.things[i].type);
+        float tx = (float)m.things[i].x, ty = (float)m.things[i].y;
+        int rot = sprite_rotation((float)m.things[i].angle * kDeg2Rad, tx - cam.x, ty - cam.y);
+        bool flip = false;
+        int li = sprite_find(*sc, nm, 'A', rot, flip);
+        if (li < 0) li = sprite_find(*sc, nm, 'A', 0, flip);
+        if (li < 0) li = sprite_find(*sc, nm, 'A', 1, flip);
+        if (li < 0) continue;
+        const Sprite* sp = sprite_get(*sc, li);
+        if (!sp) continue;
+        SpriteProj p = project_thing(cam, ca, sa, tx, ty, sp->w, sp->h);
+        if (!p.visible) continue;
+        int spanW = p.colR - p.colL + 1, spanH = p.rowBot - p.rowTop + 1;
+        if (spanW <= 0 || spanH <= 0) continue;
+        int light = light_row(kSpriteLight, p.depth, cm.numMaps);
+        for (int x = p.colL; x <= p.colR; ++x) {
+            if (x < 0 || x > kScreenWmax) continue;
+            if (!sprite_column_visible(p.depth, depthBuf[x])) continue;
+            int u = ((x - p.colL) * sp->w) / spanW;
+            if (u < 0) u = 0;
+            if (u >= sp->w) u = sp->w - 1;
+            if (flip) u = sp->w - 1 - u;
+            for (int y = p.rowTop; y <= p.rowBot; ++y) {
+                if (y < 0 || y >= kScreenH) continue;
+                int v = ((y - p.rowTop) * sp->h) / spanH;
+                if (v < 0) v = 0;
+                if (v >= sp->h) v = sp->h - 1;
+                uint8_t texel = sp->texels[u * sp->h + v];
+                if (texel == kSpriteGap) continue;
+                fb_put(fb, x, y, shade_gray(pal, cm, texel, light));
+            }
+        }
+    }
 }
 
 } // namespace doom
