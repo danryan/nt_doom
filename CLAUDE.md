@@ -320,8 +320,42 @@ a hit on the nearest thing in front. New engine modules and durable lessons:
   `calculateRequirements` caches `req.sram` at scan time, so the device still needs a REBOOT
   (`0x7F`) before the enlarged struct is allocated; the `deploy-sysex` rescan alone is not
   enough. DRAM stays 8 MB (unchanged).
-- `.text` with sprites and hitscan is about 11.9 KB (0x2908 + 0x598), far under the ~82 KB
-  cap. ARM symbols unchanged from P3 (only the firmware-resolved set).
+- `.text` with sprites and hitscan is about 11.9 KB, far under the ~82 KB cap. ARM symbols
+  unchanged from P3 (only the firmware-resolved set).
+
+### P4 hardware bring-up (the GOT-internal-function fault)
+
+The engine was correct on the host the entire time (full real-DOOM1.WAD path passes under
+ASan via `real_wad_probe`); the one device fault was a PIC-relocation quirk the host cannot
+model. Most load-bearing lesson:
+
+- NEVER pass a plug-in-internal function as a runtime function POINTER. P4's `render_things`
+  took the type-to-sprite resolver as a `ThingSpriteFn` and `draw()` passed
+  `doom::thing_sprite_name`. Taking an internal function's address emits an `R_ARM_GOT32`
+  for that function, and the NT firmware PIC loader does NOT relocate a GOT slot that holds
+  an internal function address (it relocates internal DATA GOT slots fine, e.g.
+  `render_view`'s `static order[]`, and external `NT_*`/`memcpy` GOT slots). The unrelocated
+  slot yields a garbage pointer; `render_things` calling `nameFn(...)` jumped to a wild
+  address and hard-faulted DETERMINISTICALLY (UsageFault `UNALIGNED`, `CFSR=0x01000000`,
+  `HFSR` forced, a corrupted `PC=0x000000AA` landing mid-`__udivdi3`, garbage `R3`). The fix
+  is to call `thing_sprite_name` DIRECTLY (a PC-relative `R_ARM_THM_CALL`, which always
+  works); `render.h` includes `combat.h`. Factory function pointers and the `readCb` async
+  callback are fine because they relocate as `R_ARM_ABS32` (in `.data`), not GOT32. Diagnose
+  this class with `arm-none-eabi-objdump -r <o> | grep R_ARM_GOT32`: any GOT32 to one of
+  your own functions (not data, not an `NT_*`/libc symbol) is the bug.
+- The fault was DETERMINISTIC and identical across power cycles, which distinguished it from
+  the P3 stack-overflow (non-deterministic, depends on BSP depth). A deterministic wild PC
+  plus a garbage pointer in a register points at a mis-relocated address, not a stack smash.
+  Confirm there is no large stack frame first (`objdump -d | grep 'sub.*sp'`) to rule out the
+  P3 class, then enumerate relocations.
+- The reboot/SRAM-cache theory was a red herring here: the fault survived a full power cycle,
+  which proves `calculateRequirements` was re-cached and the struct fit. A surviving-power-
+  cycle fault is a code/relocation bug, not the SRAM size cache.
+- `real_wad_probe` now runs the full P4 device path (compose every referenced sprite,
+  `render_things` across 8 view angles, hitscan) under ASan on a local real WAD. It proved
+  the sprite/render/hitscan logic correct (138 things, 307 sprite-get calls, 30 distinct
+  lumps cached of 128, no overflow), isolating the fault to the device-only relocation. When
+  "works on host, faults on device", extend `real_wad_probe` for the new path first.
 
 ## NT plug-in build mechanics
 
