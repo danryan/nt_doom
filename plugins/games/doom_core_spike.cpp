@@ -86,7 +86,6 @@ struct _doomSpike : public _NT_algorithm {
     // User-selected WAD load (Folder/Sample parameters, async read into the DRAM arena).
     volatile bool readDone; bool readOk; bool parsed; bool loadReq; bool alive;
     uint32_t wadFrames;
-    uint8_t head4[4]; bool wadOpenOk; bool reqOk;   // TEMP debug
 
     uint8_t scrCache[kScrBottomRows * 128];   // overlay-suppression snapshot
     int     postDraw;
@@ -103,10 +102,10 @@ static const _NT_parameter parameters[] = {
     { .name = "Strafe spd",.min = 0, .max = 1000, .def = 200, .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
     { .name = "Radius",    .min = 1, .max = 64,   .def = 16,  .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
     { .name = "Deadzone",  .min = 0, .max = 200,  .def = 10,  .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
-    { .name = "Fwd bus",   .min = 1, .max = 28,   .def = 1,   .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
-    { .name = "Turn bus",  .min = 1, .max = 28,   .def = 2,   .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
-    { .name = "Strafe bus",.min = 1, .max = 28,   .def = 3,   .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
-    { .name = "Fire bus",  .min = 1, .max = 28,   .def = 4,   .unit = kNT_unitNone, .scaling = 0, .enumStrings = nullptr },
+    { .name = "Fwd bus",   .min = 1, .max = 28,   .def = 1,   .unit = kNT_unitCvInput, .scaling = 0, .enumStrings = nullptr },
+    { .name = "Turn bus",  .min = 1, .max = 28,   .def = 2,   .unit = kNT_unitCvInput, .scaling = 0, .enumStrings = nullptr },
+    { .name = "Strafe bus",.min = 1, .max = 28,   .def = 3,   .unit = kNT_unitCvInput, .scaling = 0, .enumStrings = nullptr },
+    { .name = "Fire bus",  .min = 1, .max = 28,   .def = 4,   .unit = kNT_unitCvInput, .scaling = 0, .enumStrings = nullptr },
 };
 enum { kPFolder, kPSample, kPMove, kPTurn, kPStrafe, kPRadius, kPDeadzone, kPFwdBus, kPTurnBus, kPStrafeBus, kPFireBus };
 static const uint8_t page1[] = { kPFolder, kPSample, kPMove, kPTurn, kPStrafe, kPRadius, kPDeadzone, kPFwdBus, kPTurnBus, kPStrafeBus, kPFireBus };
@@ -130,7 +129,6 @@ _NT_algorithm* construct(const _NT_algorithmMemoryPtrs& ptrs, const _NT_algorith
     a->panelFwd = a->panelTurn = 0.0f; a->panelFire = false;
     a->readDone = false; a->readOk = false; a->parsed = false;
     a->loadReq = false; a->alive = false; a->wadFrames = 0;
-    a->head4[0] = a->head4[1] = a->head4[2] = a->head4[3] = 0; a->wadOpenOk = false; a->reqOk = false;
     a->postDraw = 0;
 
     // Fallback so ADD always renders: parse the embedded synthetic WAD (rodata bytes, no
@@ -164,10 +162,8 @@ static void swapRealWad(_doomSpike* a) {
     doom::arena_reset(a->arena);
     uint8_t* wadBytes = (uint8_t*)doom::arena_alloc(a->arena, wadLen, 8);
     if (!wadBytes) return;
-    for (int i = 0; i < 4; ++i) a->head4[i] = wadBytes[i];   // TEMP debug
     doom::Wad w;
-    a->wadOpenOk = doom::wad_open(wadBytes, wadLen, w);
-    if (!a->wadOpenOk) return;
+    if (!doom::wad_open(wadBytes, wadLen, w)) return;
     doom::Map m;
     if (!doom::map_load(w, "E1M1", m)) return;
     a->map = m;
@@ -214,7 +210,7 @@ void step(_NT_algorithm* self, float* busFrames, int numFramesBy4) {
                     g_req.dst = a->dram; g_req.numFrames = a->wadFrames; g_req.startOffset = 0;
                     g_req.channels = kNT_WavMono; g_req.bits = kNT_WavBits16;
                     g_req.progress = kNT_WavNoProgress; g_req.callback = readCb; g_req.callbackData = a;
-                    a->reqOk = NT_readSampleFrames(g_req);
+                    NT_readSampleFrames(g_req);
                 }
             }
         }
@@ -249,17 +245,6 @@ bool draw(_NT_algorithm* self) {
     doom::Camera cam{ a->pose.x, a->pose.y, a->pose.angle };
     const doom::TextureCache* tex = a->texReady ? &a->tex : nullptr;
     doom::render_view(a->map, cam, a->pal, a->cm, tex, NT_screen);
-    // TEMP debug HUD: surface the WAD load/parse state (remove before merge).
-    { char b[12];
-      auto lbl = [&](int x, const char* s, int v) {
-          NT_drawText(x, 6, s); int n = NT_intToString(b, v); b[n] = 0; NT_drawText(x + 14, 6, b); };
-      char h[5]; for (int i = 0; i < 4; ++i) h[i] = (a->head4[i] >= 32 && a->head4[i] < 127) ? (char)a->head4[i] : '.';
-      h[4] = 0; NT_drawText(0, 6, h);
-      lbl(34,  "rq", a->reqOk);
-      lbl(66,  "rd", a->readDone);
-      lbl(100, "ok", a->readOk);
-      lbl(134, "w", a->wadOpenOk);
-      lbl(166, "v", a->map.numVerts); }
     // Snapshot the bottom rows so step() can restore them over the firmware overlay.
     memcpy(a->scrCache, NT_screen + 56 * 128, sizeof(a->scrCache));
     a->postDraw = 4;
@@ -307,8 +292,8 @@ void customUi(_NT_algorithm* self, const _NT_uiData& data) {
     auto* a = (_doomSpike*)self;
     // Left encoder turns, right encoder moves forward/back; each tick is a brief impulse
     // the step() loop consumes and decays. Button 1 fires.
-    a->panelTurn += 0.5f * (float)data.encoders[0];
-    a->panelFwd  += 0.5f * (float)data.encoders[1];
+    a->panelTurn += 1.0f * (float)data.encoders[0];
+    a->panelFwd  += 1.0f * (float)data.encoders[1];
     if (a->panelTurn > 1.0f) a->panelTurn = 1.0f; else if (a->panelTurn < -1.0f) a->panelTurn = -1.0f;
     if (a->panelFwd  > 1.0f) a->panelFwd  = 1.0f; else if (a->panelFwd  < -1.0f) a->panelFwd  = -1.0f;
     if (data.controls & kNT_button1) a->panelFire = true;
