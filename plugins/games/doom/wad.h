@@ -30,8 +30,17 @@ inline bool wad_open(const uint8_t* data, uint32_t size, Wad& w) {
     if (h->numLumps < 0 || h->dirOffset < 0) return false;
     uint64_t dirEnd = (uint64_t)h->dirOffset + (uint64_t)h->numLumps * sizeof(WadDirEntry);
     if (dirEnd > size) return false;
+    // Validate every directory entry's byte range. A truncated or corrupt read (e.g. a
+    // device sample the firmware did not deliver intact) can leave the header valid but a
+    // lump filePos garbage; without this check wad_lump_ptr would return a wild pointer
+    // and the renderer would dereference unmapped memory (a hard fault on device).
+    const WadDirEntry* dir = reinterpret_cast<const WadDirEntry*>(data + h->dirOffset);
+    for (int32_t i = 0; i < h->numLumps; ++i) {
+        if (dir[i].filePos < 0 || dir[i].size < 0) return false;
+        if ((uint64_t)dir[i].filePos + (uint64_t)dir[i].size > size) return false;
+    }
     w.base = data; w.size = size;
-    w.dir = reinterpret_cast<const WadDirEntry*>(data + h->dirOffset);
+    w.dir = dir;
     w.numLumps = h->numLumps;
     return true;
 }

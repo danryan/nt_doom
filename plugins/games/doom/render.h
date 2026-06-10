@@ -116,7 +116,11 @@ inline int light_row(int sectorLight, float depth, int numMaps) {
 inline void render_seg(const Map& m, int32_t segIndex, float ca, float sa,
                        const Camera& cam, const Palette& pal, const Colormap& cm,
                        const TextureCache* tex, SolidSegs& solid, uint8_t* fb) {
+    if (segIndex < 0 || segIndex >= m.numSegs) return;
     const SegRaw& seg = m.segs[segIndex];
+    // Bounds-check vertex indices: a corrupt or partially-read WAD can carry garbage seg
+    // indices that would otherwise dereference unmapped memory (a device hard fault).
+    if ((uint16_t)seg.v1 >= (uint16_t)m.numVerts || (uint16_t)seg.v2 >= (uint16_t)m.numVerts) return;
     const VertexRaw& A = m.verts[seg.v1];
     const VertexRaw& B = m.verts[seg.v2];
     float ax = A.x - cam.x, ay = A.y - cam.y;
@@ -170,6 +174,7 @@ inline void render_seg(const Map& m, int32_t segIndex, float ca, float sa,
 inline void render_subsector(const Map& m, int32_t ssecIndex, float ca, float sa,
                              const Camera& cam, const Palette& pal, const Colormap& cm,
                              const TextureCache* tex, SolidSegs& solid, uint8_t* fb) {
+    if (ssecIndex < 0 || ssecIndex >= m.numSsecs) return;
     const SubsecRaw& ss = m.ssecs[ssecIndex];
     for (int s = 0; s < ss.numSegs; ++s)
         render_seg(m, ss.firstSeg + s, ca, sa, cam, pal, cm, tex, solid, fb);
@@ -185,8 +190,12 @@ inline void render_view(const Map& m, const Camera& cam,
     SolidSegs solid; solidsegs_clear(solid);
     // Visit-order ceiling. E1M1 has ~470 subsectors, well under 1024; a larger PWAD
     // would truncate here (bsp_visit_order stops at cap, dropping the deepest leaves).
+    // STATIC, not a stack array: 1024 ints is 4 KB, which overflows the NT's small draw
+    // stack on a real map (the synthetic 2-subsector map never tripped it; E1M1's deep
+    // BSP tree does, corrupting the return address into a hard fault). draw() is called
+    // single-threaded by the firmware, so a static scratch buffer is safe.
     static const int kMaxVisit = 1024;
-    int order[kMaxVisit];
+    static int order[kMaxVisit];
     int n = bsp_visit_order(m, cam, order, kMaxVisit);
     for (int i = 0; i < n; ++i)
         render_subsector(m, order[i], ca, sa, cam, pal, cm, tex, solid, fb);

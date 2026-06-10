@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <utility>
@@ -96,6 +97,116 @@ inline std::vector<uint8_t> build_test_wad() {
     o32(out, 0); // patched later
 
     std::vector<std::pair<int32_t,int32_t>> dir; // (filePos, size)
+    for (auto& L : lumps) {
+        int32_t pos = (int32_t)out.size();
+        out.insert(out.end(), L.data.begin(), L.data.end());
+        dir.push_back({pos, (int32_t)L.data.size()});
+    }
+    int32_t dirStart = (int32_t)out.size();
+    for (size_t i = 0; i < lumps.size(); ++i) {
+        o32(out, dir[i].first); o32(out, dir[i].second);
+        out.insert(out.end(), lumps[i].name, lumps[i].name + 8);
+    }
+    out[dirOffsetPos+0] = dirStart & 0xFF; out[dirOffsetPos+1] = (dirStart>>8)&0xFF;
+    out[dirOffsetPos+2] = (dirStart>>16)&0xFF; out[dirOffsetPos+3] = (dirStart>>24)&0xFF;
+    return out;
+}
+
+// Builds a valid IWAD for P3 movement/collision: a 512x512 enclosed room with four
+// solid one-sided walls, one sector, one subsector, NODES omitted (map_load allows it;
+// numNodes==0 makes bsp_visit_order enumerate the single subsector so render works),
+// a player-1 start at the center (256,256), gray-ramp PLAYPAL/COLORMAP, and a generated
+// BLOCKMAP (origin (0,0), 5x5 grid of 128-unit blocks, conservative bbox-overlap cell
+// assignment so the collision broadphase never misses a wall near the player).
+inline std::vector<uint8_t> build_move_test_wad() {
+    using namespace wadbuild;
+    std::vector<Lump> lumps;
+    auto add = [&](const char* nm, std::vector<uint8_t> d) {
+        Lump L; memset(L.name, 0, 8);
+        for (int i = 0; i < 8 && nm[i]; ++i) L.name[i] = nm[i];
+        L.data = std::move(d); lumps.push_back(std::move(L));
+    };
+
+    add("E1M1", {});
+
+    // THINGS: player-1 start at the room center (256,256), facing +x (angle 0).
+    { std::vector<uint8_t> d; w16(d,256); w16(d,256); w16(d,0); w16(d,1); w16(d,7); add("THINGS", d); }
+
+    // VERTEXES: square room corners.
+    const int16_t vx[4]={0,512,512,0}, vy[4]={0,0,512,512};
+    { std::vector<uint8_t> d; for (int i=0;i<4;++i){ w16(d,vx[i]); w16(d,vy[i]); } add("VERTEXES", d); }
+
+    // LINEDEFS: four one-sided blocking walls (flags=1=ML_BLOCKING, back=0xFFFF).
+    const int lp[4][2]={{0,1},{1,2},{2,3},{3,0}};
+    { std::vector<uint8_t> d;
+      for (int i=0;i<4;++i){ w16(d,(int16_t)lp[i][0]); w16(d,(int16_t)lp[i][1]); w16(d,1); w16(d,0); w16(d,0); w16(d,(int16_t)i); w16(d,(int16_t)0xFFFF); }
+      add("LINEDEFS", d); }
+
+    // SIDEDEFS: all to sector 0, middle "WALL".
+    { std::vector<uint8_t> d;
+      for (int i=0;i<4;++i){ w16(d,0); w16(d,0); name8(d,"-"); name8(d,"-"); name8(d,"WALL"); w16(d,0); }
+      add("SIDEDEFS", d); }
+
+    // SEGS: one per line.
+    { std::vector<uint8_t> d;
+      for (int i=0;i<4;++i){ w16(d,(int16_t)lp[i][0]); w16(d,(int16_t)lp[i][1]); w16(d,0); w16(d,(int16_t)i); w16(d,0); w16(d,0); }
+      add("SEGS", d); }
+
+    // SSECTORS: one subsector, all four segs.
+    { std::vector<uint8_t> d; w16(d,4); w16(d,0); add("SSECTORS", d); }
+
+    // SECTORS: floor 0, ceiling 128, light 200. (No NODES lump: numNodes==0.)
+    { std::vector<uint8_t> d; w16(d,0); w16(d,128); name8(d,"FLAT"); name8(d,"FLAT"); w16(d,200); w16(d,0); w16(d,0); add("SECTORS", d); }
+
+    // PLAYPAL: gray ramp.
+    { std::vector<uint8_t> d;
+      for (int i=0;i<256;++i){ d.push_back((uint8_t)i); d.push_back((uint8_t)i); d.push_back((uint8_t)i); }
+      add("PLAYPAL", d); }
+
+    // COLORMAP: 34 darkening maps.
+    { std::vector<uint8_t> d;
+      for (int m=0;m<34;++m) for (int i=0;i<256;++i) d.push_back((uint8_t)((i*(33-m))/33));
+      add("COLORMAP", d); }
+
+    // BLOCKMAP: origin (0,0), cols=rows=5, block size 128. A cell lists a linedef when
+    // the linedef's bounding box overlaps the cell rectangle [c*128,(c+1)*128] x
+    // [r*128,(r+1)*128]. Words are int16; offsets are word offsets from the lump start.
+    { const int ox=0, oy=0, cols=5, rows=5, BS=128;
+      auto lbb=[&](int ln,int&x0,int&y0,int&x1,int&y1){
+          int a=lp[ln][0], b=lp[ln][1];
+          x0=std::min(vx[a],vx[b]); x1=std::max(vx[a],vx[b]);
+          y0=std::min(vy[a],vy[b]); y1=std::max(vy[a],vy[b]); };
+      std::vector<std::vector<int16_t>> cellLines(cols*rows);
+      for (int r=0;r<rows;++r) for (int c=0;c<cols;++c) {
+          int cx0=ox+c*BS, cx1=cx0+BS, cy0=oy+r*BS, cy1=cy0+BS;
+          for (int ln=0; ln<4; ++ln) {
+              int x0,y0,x1,y1; lbb(ln,x0,y0,x1,y1);
+              if (x0<=cx1 && x1>=cx0 && y0<=cy1 && y1>=cy0) cellLines[r*cols+c].push_back((int16_t)ln);
+          }
+      }
+      std::vector<int16_t> words;
+      words.push_back((int16_t)ox); words.push_back((int16_t)oy);
+      words.push_back((int16_t)cols); words.push_back((int16_t)rows);
+      int offTable = (int)words.size();
+      for (int i=0;i<cols*rows;++i) words.push_back(0);   // offset placeholders
+      for (int i=0;i<cols*rows;++i) {
+          words[offTable+i] = (int16_t)words.size();      // word offset to this blocklist
+          words.push_back(0);                              // leading 0x0000
+          for (int16_t ln : cellLines[i]) words.push_back(ln);
+          words.push_back((int16_t)0xFFFF);                // terminator
+      }
+      std::vector<uint8_t> d; for (int16_t wd : words) w16(d, wd);
+      add("BLOCKMAP", d); }
+
+    // Assemble: 12-byte header, lump data, then directory.
+    std::vector<uint8_t> out;
+    auto o32 = [&](std::vector<uint8_t>& v, int32_t x){
+        v.push_back(x & 0xFF); v.push_back((x>>8)&0xFF); v.push_back((x>>16)&0xFF); v.push_back((x>>24)&0xFF); };
+    out.push_back('I'); out.push_back('W'); out.push_back('A'); out.push_back('D');
+    o32(out, (int32_t)lumps.size());
+    int32_t dirOffsetPos = (int32_t)out.size();
+    o32(out, 0);
+    std::vector<std::pair<int32_t,int32_t>> dir;
     for (auto& L : lumps) {
         int32_t pos = (int32_t)out.size();
         out.insert(out.end(), L.data.begin(), L.data.end());

@@ -46,17 +46,23 @@ Single Catch2 case: `./build/host/test_doom_render '[render]'` (build first via
 
 - `plugins/games/doom/*.h` is the engine: `wad.h` (clean-room WAD container parse),
   `geom.h` (zero-copy map view over WAD lumps, including the typed `NodeRaw` NODES
-  view and the P2 `seg_sidedef`/`seg_sector`/`seg_is_one_sided` resolvers), `fb.h`
-  (4-bit framebuffer packing), `render.h` (the P2 production BSP renderer:
+  view, the P2 `seg_sidedef`/`seg_sector`/`seg_is_one_sided` resolvers, and the P3
+  `Blockmap` view: `blockmap_load`/`blockmap_cell_of`/`blockmap_for_lines_in_cell`),
+  `fb.h` (4-bit framebuffer packing), `render.h` (the P2 production BSP renderer:
   `point_on_side`, `bsp_visit_order`, the `SolidSegs` occlusion clip, `light_row`, and
   the 6-arg `render_view(m, cam, pal, cm, tex, fb)`), `texture.h` (P2 `TextureCache`:
   TEXTURE1/PNAMES/patch parse and lazy column-major composition into the DRAM arena,
-  `texture_sample`/`wall_u`), and the P1 data subsystem: `arena.h` (no-heap DRAM bump
-  allocator), `wad_read.h` (host-testable WAD read-door seam over the WAV smuggle plus a
-  documented `NT_readSampleFrames` device adapter), `palette.h` (PLAYPAL/COLORMAP to
-  16-level gray: `luma4`, `palette_load`, `colormap_load`, `shade_gray`).
-- `plugins/games/doom_core_spike.cpp` is the non-interactive renderer-core plug-in
-  (GUID `DmSc`), built by the `BUILD_GAME` Makefile macro.
+  `texture_sample`/`wall_u`), the P3 player subsystem: `movement.h` (pure tank-scheme
+  integrator), `input.h` (CV conditioning and intent mapping), `collision.h`
+  (BLOCKMAP-broadphase per-axis line-slide), and the P1 data subsystem: `arena.h`
+  (no-heap DRAM bump allocator), `wad_read.h` (host-testable WAD read-door seam over the
+  WAV smuggle plus a documented `NT_readSampleFrames` device adapter), `palette.h`
+  (PLAYPAL/COLORMAP to 16-level gray: `luma4`, `palette_load`, `colormap_load`,
+  `shade_gray`).
+- `plugins/games/doom_core_spike.cpp` is the player plug-in (GUID `DmSc`), built by the
+  `BUILD_GAME` Makefile macro: P3 loads a real `DOOM1.WAD` via the read door, moves the
+  camera with CV and front-panel controls, and slides against solid walls. It keeps the
+  embedded synthetic WAD as the pre-load fallback.
 - `plugins/probes/` holds the hardware probes: `wad_read_probe.cpp` (GUID `WdRd`, the
   SD file door, evolved in P1 to read a WAV-smuggled WAD into a DRAM arena and run the
   full parse stack on device as the P1 smoke test) and `dram_grant_probe.cpp` (GUID
@@ -80,7 +86,7 @@ Single Catch2 case: `./build/host/test_doom_render '[render]'` (build first via
   cap. Keep each plug-in under that cap; there is no code offload to DRAM (the
   loader ignores non-canonical executable sections).
 
-## P2 BSP renderer (host-tested, hardware smoke pending)
+## P2 BSP renderer (host-tested, hardware smoke PASS)
 
 The P2 renderer replaces the single-subsector spike with a real BSP walk plus
 solid-seg occlusion and perspective textured walls. Durable lessons:
@@ -116,6 +122,138 @@ solid-seg occlusion and perspective textured walls. Durable lessons:
   member, so `sizeof(_doomSpike)` is ~263 KB. Per the SRAM-cache hazard below, the
   device needs a reboot after the first deploy of this build before
   `calculateRequirements` re-reads the enlarged struct.
+- On-device smoke PASSED. The device capture matched the host occlusion test exactly:
+  near wall column 128 first-lit shade 10 over 22 rows; far wall side gaps (columns 60
+  and 195) shade 4 over 8 rows; column 20 unlit. Near brighter and taller than far, far
+  visible only in the gaps the near wall does not occlude.
+- Synthetic-texture-vs-palette gotcha: with textures enabled, walls render NEAR-BLACK on
+  the synthetic WAD. `PWALL` pixel values are 0..15, and the test WAD's PLAYPAL is a gray
+  ramp, so those low palette indices sit at the dark end (`shade_gray` of index 0..15 is
+  ~gray 0). Flat mode (`kFlatWallIndex = 200` to gray 12) shows the geometry. Host render
+  tests only exercise flat mode (`tex == nullptr`), so this first surfaces on device. To
+  visually verify geometry on hardware with the synthetic WAD, pass `nullptr` (flat); a
+  real `DOOM1.WAD` with real textures and palette renders visible textured walls. The
+  engine is correct; this is a synthetic-data artifact.
+
+## P3 player movement, collision, controls, real-WAD load (host-tested, hardware smoke PASS)
+
+P3 makes the camera a player against real geometry. On-device smoke PASSED: a real
+`DOOM1.WAD` loads via the read door (sample-picker selected), real E1M1 renders with real
+textures and palette, CV and front-panel controls drive the player, and collision holds
+against walls. Floors/ceilings (visplanes), proper two-sided/upper-lower texturing, and
+sky stay deferred to P4/P5, so on E1M1 only one-sided walls show texture and there is no
+floor/ceiling; that is the documented P3 scope, not a defect. Durable lessons:
+
+- New engine modules: `movement.h` (pure tank-scheme integrator: `turn_angle`,
+  `move_delta`, `integrate` over `Pose`/`Intent`/`MoveTuning`), `input.h` (`cv_lowpass`,
+  `cv_to_norm`, `read_cv_intent`, `InputConfig`), `collision.h` (`move_blocked`,
+  `collide_move`, `Vec2`, libm-free `segs_intersect`/`point_seg_dist2`), the `Blockmap`
+  view in `geom.h` (`blockmap_load`/`blockmap_cell_of`/`blockmap_for_lines_in_cell`), and
+  `build_move_test_wad()` in `wad_build.h`.
+- Tank control scheme (CV maps to velocity, never position): CV1 forward along the
+  heading, CV2 turn rate (heading is integrated, so a raycaster's facing is free), CV3
+  strafe along the perpendicular, CV4 fire gate. Per axis: lowpass (single-pole IIR) then
+  deadzone plus normalize plus a CUBIC taper, sign-preserving and libm-free. Cubic (not
+  squared) plus a 1 V default deadzone feels right for manual CV control: low voltages
+  crawl, high voltages ramp to full, and a resting source does not drift. Read CV once per
+  `step` block, not at audio rate; advance by `dt = numFrames / sampleRate`.
+- CV INPUT ROUTING: a bus-selector parameter that reads `busFrames` MUST be declared
+  `kNT_unitCvInput` (the vendor `NT_PARAMETER_CV_INPUT` unit), not `kNT_unitNone`. The
+  firmware only routes a physical input onto `busFrames` for buses an algorithm CLAIMS via
+  a CV-input parameter; with `kNT_unitNone` the read returns all-zero and no input works.
+  Read the bus with `busFrames[(v[busParam]-1) * numFrames + 0]` (param value is 1-based).
+- BLOCKMAP format: header `originX, originY, cols, rows` (int16); then `cols*rows` uint16
+  word offsets (int16 units from the lump start) to per-cell blocklists; each blocklist is
+  a leading `0x0000` word, a run of uint16 linedef indices, and a `0xFFFF` terminator. Skip
+  the leading `0x0000` UNCONDITIONALLY (a conditional "skip while zero" would also eat a
+  genuine linedef index 0). Block size is 128 units; `col = floor((x-originX)/128)`.
+- Collision is per-axis slide, not tangent projection: commit the X component if clear,
+  then Y against the updated X, so a blocked axis keeps its coordinate and the player
+  slides along walls and stops at corners. A move is blocked when the swept segment crosses
+  a solid line (anti-tunnel, catches fast moves) OR the destination is within `radius` of a
+  solid line AND closer to it than the source (so parallel slides, and a player already
+  within radius, are still allowed). Solid linedef = one-sided (`back == 0xFFFF`) or
+  ML_BLOCKING (`flags & 0x0001`). Broadphase: the swept bbox expanded by `radius`, cells
+  clamped to the grid.
+- Real-WAD device load uses a sample-PICKER, not a name scan: `Folder` and `Sample`
+  parameters (`kNT_unitHasStrings`, `parameterString` renders the folder/file names like
+  the built-in sample player) select the WAD WAV; `parameterChanged` sets a load request
+  that `step` services. The firmware's construct-time `parameterChanged` fires auto-load
+  the default selection, so no front-panel nudge is needed and no `alive` gate is required
+  (nothing self-pushes a parameter). The read is async with a DYNAMIC frame count from
+  `_NT_wavInfo::numFrames`, into an 8 MB DRAM grant; on the callback `arena_reset`,
+  `arena_alloc(numFrames*2)` reserves the WAD span at the DRAM base, then `wad_open`/
+  `map_load`/`palette_load`/`colormap_load`/`texcache_init`/`blockmap_load`. The embedded
+  synthetic WAD is the pre-load fallback (rendered FLAT, never composing synthetic textures
+  at construct: the synthetic PWALL is near-black on the gray ramp anyway, and composing at
+  add time would write the arena before the grant is proven and hard-fault).
+- `doom_core_spike` dropped the 256 KB SRAM `arenaMem` member and now runs the arena over
+  the 8 MB DRAM grant. Both the SRAM struct size AND the DRAM request changed, so the device
+  needs a reboot (`0x7F`) before `calculateRequirements` re-reads either; the rescan alone
+  is not enough.
+- `serialise`/`deserialise` are the first use in this repo. The firmware resolves the
+  `_NT_jsonStream`/`_NT_jsonParse` mangled methods (`addMemberName`, `addNumber(float)`,
+  `matchName`, `number(float&)`) at load, alongside the `NT_*` ABI. `addNumber(float)` is a
+  real overload, so the pose serialises as three floats (`px`, `py`, `pa`) directly; never
+  `addString`. Confirm these symbols resolve on the first hardware load.
+- The construct-time `parameterChanged`/`NT_setParameterFromUi` hazard was avoided entirely
+  by NOT self-pushing parameters from `customUi`: encoders drive a movement-intent latch
+  (`panelFwd`/`panelTurn`, decayed each block) and button 1 sets a fire latch, none of which
+  edit a parameter. No `alive` sentinel is needed when nothing self-pushes.
+- `cos_sin` is forward-declared in `movement.h` so the header does not pull `render.h`; each
+  host test TU defines it with `<cmath>`, and the ARM rodata LUT lives in
+  `doom_core_spike.cpp`. Catch2 `Approx` needs the `Catch::` qualifier in this harness
+  (`catch_main.cpp` adds no using-directive).
+- `.text` with movement, collision, input, blockmap, `customUi`, serialise, and the sample
+  picker is about 7.7 KB, far under the ~82 KB cap.
+
+### P3 hardware bring-up (the device-only failures and how they were found)
+
+The engine was correct on the host the entire time; every device fault was an environment
+mismatch the host could not reproduce. Lessons, most load-bearing first:
+
+- STACK OVERFLOW on real maps was the root cause of the whole fault saga. `render_view`
+  held `int order[1024]` (4 KB) as a STACK local; on the NT's small `draw()` stack, the
+  real E1M1 BSP walk (237 subsectors, 236-node tree) overflowed it. It surfaced two ways:
+  a wild-pointer bus-fault (BFAR in the DRAM region past the grant) when the overflow
+  clobbered a local pointer, and a garbage-PC usage fault (`PC=0x2A`, `CFSR=INVSTATE`,
+  `LR=1`) when it clobbered the return address. The synthetic 2-subsector map never tripped
+  it and the host's large stack never reproduced it, so it passed every host test. Fix:
+  make the visit-order buffer `static` (draw is single-threaded). Large scratch arrays
+  belong in `.bss` or instance SRAM, NEVER on the NT draw/step stack.
+- Lazy texture composition deepens the same draw stack: `TextureCache::get()` runs
+  `tex_blit_patch` from inside `render_view->subsector->seg->texture_sample->get`. Compose
+  every texture ONCE up front (in `step`/`swapRealWad`, normal stack) so `draw()`'s `get()`
+  only returns cached entries.
+- The device read was byte-exact all along (no sample-size cap; the NT streams from the
+  card, 4 GB FAT32 limit). The 4 MB `DOOM1.WAD`-as-WAV indexed and read fine. The earlier
+  "corrupt read" theory was wrong; it was always the stack.
+- Defense in depth added regardless: `wad_open` now validates every directory entry
+  (`filePos`/`size` within the data) so a corrupt/truncated read is rejected gracefully,
+  and `render.h`/`geom.h`/`collision.h` bound-check seg/vertex/linedef/subsector indices so
+  bad map data renders partial garbage instead of dereferencing unmapped memory.
+- `real_wad_probe` (host, ASan; `make build/host/real_wad_probe`, needs a local uncommitted
+  WAD path) runs the full device load path: WAV-smuggle round-trip, `wad_open`, `map_load`,
+  compose ALL textures, render, collide, plus a device-exact single-8 MB-arena layout and a
+  truncated-WAD case. It proved the engine correct and isolated the bug to the device-only
+  stack. When "works on host, faults on device", reach for an ASan host harness that
+  replicates the device memory layout, and suspect the small device stack.
+- `numParameters` is part of `calculateRequirements`, cached at scan time, so ADDING or
+  removing a parameter (changing the count) needs a REBOOT (`0x7F`), not just the
+  `deploy-sysex` rescan, or the new params never appear. Param ATTRIBUTE changes (unit,
+  default, min/max, name) take effect on the next ADD with no reboot. The firmware prepends
+  a `Bypass` parameter at UI index 0, but `self->v[]` is indexed by the plug-in's own
+  parameter order (0-based, no Bypass offset).
+- nt_helper over MCP: `add` frequently returns "did not appear" even when it added; verify
+  with a screenshot, not the return. It CANNOT set numeric parameter values over MCP, so
+  Folder/Sample and the speeds are dialed on the front panel. After a reboot the catalog is
+  stale; a structurally-changed plug-in (new param count) needs a FULL nt_helper restart
+  (quit and reopen the app), not just `/mcp reconnect`.
+- NT sample browser realities: it enumerates leaf sample folders under `/samples` as
+  flattened paths (`00 Kits/2600/BD`); a flat `Folder` index over a big library needs a
+  high `max` or a first-sorting folder name (e.g. `!doom`, valid on exFAT/FAT32). A
+  multi-MB WAD WAV is fine; place it via SD-card-direct (pull the card to a laptop), since a
+  4 MB sysex upload is 512-byte ACK'd chunks and takes minutes.
 
 ## NT plug-in build mechanics
 
