@@ -13,6 +13,8 @@
 #include "doom/movement.h"
 #include "doom/input.h"
 #include "doom/collision.h"
+#include "doom/sprite.h"
+#include "doom/combat.h"
 
 // ARM cos_sin from a 256-entry rodata sine LUT (no libm sinf).
 namespace doom {
@@ -67,17 +69,26 @@ static const float kE1M1StartX = 1056.0f, kE1M1StartY = -3616.0f, kE1M1StartA = 
 
 static const int kScrBottomRows = 8;   // overlay-suppression snapshot region (rows 56..63)
 
+static const int kMaxThings = 256;
+
 struct _doomSpike : public _NT_algorithm {
     doom::Arena arena;
     uint8_t*    dram;          // DRAM grant base (WAD read target + arena backing)
     uint32_t    dramBytes;
 
+    doom::Wad         wad;     // retained: sprite_find derefs SpriteCache::wad in draw()
     doom::Map         map;
     doom::Palette     pal;
     doom::Colormap    cm;
     doom::TextureCache tex;
+    doom::SpriteCache sprites;
     doom::Blockmap    bm;
-    bool texReady, bmReady;
+    bool texReady, bmReady, spriteReady;
+
+    float depthBuf[doom::kScreenW];   // 1 KB, instance member (NOT a draw-stack local)
+    int   thingOrder[kMaxThings];     // sprite back-to-front sort scratch (instance, not stack)
+    bool  prevFire;                   // fire-gate rising-edge debounce
+    int   hitCount, hitThing;         // transient hit tally / last thing hit
 
     doom::Pose pose;
     float      lpState[4];     // CV lowpass state per axis
@@ -123,7 +134,8 @@ _NT_algorithm* construct(const _NT_algorithmMemoryPtrs& ptrs, const _NT_algorith
     a->parameters = parameters;
     a->parameterPages = &parameterPages;
     a->dram = (uint8_t*)ptrs.dram; a->dramBytes = req.dram;
-    a->texReady = a->bmReady = false;
+    a->texReady = a->bmReady = a->spriteReady = false;
+    a->prevFire = false; a->hitCount = 0; a->hitThing = -1;
     a->pose = { 0.0f, 0.0f, 0.0f };
     for (int i = 0; i < 4; ++i) a->lpState[i] = 0.0f;
     a->panelFwd = a->panelTurn = 0.0f; a->panelFire = false;
@@ -162,20 +174,36 @@ static void swapRealWad(_doomSpike* a) {
     doom::arena_reset(a->arena);
     uint8_t* wadBytes = (uint8_t*)doom::arena_alloc(a->arena, wadLen, 8);
     if (!wadBytes) return;
-    doom::Wad w;
-    if (!doom::wad_open(wadBytes, wadLen, w)) return;
+    // Open into the instance Wad (NOT a stack local): render_things calls sprite_find in
+    // draw(), which derefs SpriteCache::wad to read sprite-lump names. A stack-local Wad
+    // would dangle after this returns and fault on the next draw. base/dir point into the
+    // arena, so the instance copy stays valid until the next load resets the arena.
+    if (!doom::wad_open(wadBytes, wadLen, a->wad)) return;
     doom::Map m;
-    if (!doom::map_load(w, "E1M1", m)) return;
+    if (!doom::map_load(a->wad, "E1M1", m)) return;
     a->map = m;
-    doom::palette_load(w, a->pal);
-    doom::colormap_load(w, a->cm);
-    a->texReady = doom::texcache_init(a->tex, w, a->arena);
+    doom::palette_load(a->wad, a->pal);
+    doom::colormap_load(a->wad, a->cm);
+    a->texReady = doom::texcache_init(a->tex, a->wad, a->arena);
     // Compose every texture now (in step's context), so draw()'s get() only returns cached
     // entries. Lazy composition mid-draw would run tex_blit_patch deep in the render call
     // chain and deepen the already-tight draw stack.
     if (a->texReady)
         for (int i = 0; i < a->tex.numTextures; ++i) a->tex.get(i);
-    a->bmReady  = doom::blockmap_load(w, "E1M1", a->bm);
+    a->bmReady  = doom::blockmap_load(a->wad, "E1M1", a->bm);
+
+    // Compose every sprite a drawable thing references, up front (in step context, never in
+    // draw). sprite_get memoizes, so repeated thing names are cheap.
+    a->spriteReady = doom::spritecache_init(a->sprites, a->wad, a->arena);
+    if (a->spriteReady)
+        for (int i = 0; i < a->map.numThings; ++i) {
+            const char* nm = doom::thing_sprite_name(a->map.things[i].type);
+            if (!nm) continue;
+            for (int rot = 0; rot <= 8; ++rot) {
+                bool flip; int li = doom::sprite_find(a->sprites, nm, 'A', rot, flip);
+                if (li >= 0) doom::sprite_get(a->sprites, li);
+            }
+        }
     a->pose = { kE1M1StartX, kE1M1StartY, kE1M1StartA };
 }
 
@@ -238,13 +266,32 @@ void step(_NT_algorithm* self, float* busFrames, int numFramesBy4) {
     } else {
         a->pose = { a->pose.x + d.dx, a->pose.y + d.dy, ang };
     }
+
+    // Hitscan fire on the rising edge of the fire gate. Real-time safe: a bounded blockmap
+    // walk, no allocation. Death/removal of the hit thing is a P5 concern.
+    if (a->parsed && in.fire && !a->prevFire) {
+        float fca, fsa; doom::cos_sin(a->pose.angle, fca, fsa);
+        int hit = doom::hitscan_nearest(a->map, a->bm, a->pose.x, a->pose.y,
+                                        fca, fsa, 2000.0f, 32.0f);
+        if (hit >= 0) { ++a->hitCount; a->hitThing = hit; }
+    }
+    a->prevFire = in.fire;
 }
 
 bool draw(_NT_algorithm* self) {
     auto* a = (_doomSpike*)self;
     doom::Camera cam{ a->pose.x, a->pose.y, a->pose.angle };
     const doom::TextureCache* tex = a->texReady ? &a->tex : nullptr;
-    doom::render_view(a->map, cam, a->pal, a->cm, tex, NT_screen);
+    doom::render_view(a->map, cam, a->pal, a->cm, tex, NT_screen, a->depthBuf);
+    // Things over the walls, depth-clipped against the per-column wall depth just written.
+    // All sprites are pre-composed in swapRealWad, so draw() only reads cached columns.
+    if (a->spriteReady)
+        doom::render_things(a->map, cam, a->pal, a->cm, &a->sprites, a->depthBuf,
+                            NT_screen, a->thingOrder, kMaxThings);
+    // Center crosshair plus a hit tally (a short bar whose length tracks hitCount).
+    for (int x = 126; x <= 130; ++x) doom::fb_put(NT_screen, x, 32, 8);
+    for (int y = 30; y <= 34; ++y)   doom::fb_put(NT_screen, 128, y, 8);
+    for (int x = 0; x < (a->hitCount % 32); ++x) doom::fb_put(NT_screen, x, 0, 12);
     // Snapshot the bottom rows so step() can restore them over the firmware overlay.
     memcpy(a->scrCache, NT_screen + 56 * 128, sizeof(a->scrCache));
     a->postDraw = 4;

@@ -5,6 +5,7 @@
 namespace doom {
 
 #pragma pack(push, 1)
+struct ThingRaw   { int16_t x, y, angle, type, flags; };
 struct VertexRaw  { int16_t x, y; };
 struct SegRaw     { int16_t v1, v2, angle, linedef, side, offset; };
 struct SubsecRaw  { int16_t numSegs, firstSeg; };
@@ -24,6 +25,7 @@ inline bool     node_child_is_subsector(uint16_t c) { return (c & 0x8000u) != 0;
 inline uint16_t node_child_index(uint16_t c)        { return (uint16_t)(c & 0x7FFFu); }
 
 struct Map {
+    const ThingRaw*   things  = nullptr; int32_t numThings  = 0;
     const VertexRaw*  verts   = nullptr; int32_t numVerts   = 0;
     const SegRaw*     segs    = nullptr; int32_t numSegs    = 0;
     const SubsecRaw*  ssecs   = nullptr; int32_t numSsecs   = 0;
@@ -55,6 +57,13 @@ inline bool map_load(const Wad& w, const char* mapName, Map& m) {
     else {
         m.nodes    = (const NodeRaw*)wad_lump_ptr(w, ni);
         m.numNodes = (int32_t)(wad_lump_size(w, ni) / sizeof(NodeRaw));
+    }
+    // THINGS is optional (mirror NODES): absent THINGS is non-fatal.
+    int32_t thi = wad_find_lump(w, "THINGS", base);
+    if (thi < 0) { m.things = nullptr; m.numThings = 0; }
+    else {
+        m.things    = (const ThingRaw*)wad_lump_ptr(w, thi);
+        m.numThings = (int32_t)(wad_lump_size(w, thi) / sizeof(ThingRaw));
     }
     return true;
 }

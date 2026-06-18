@@ -121,7 +121,7 @@ build/host/test_wad: harness/tests/test_wad.cpp harness/tools/wad_build.h plugin
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_wad.cpp $(HARNESS_SRCS)
 
-build/host/test_doom_render: harness/tests/test_doom_render.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/palette.h plugins/games/doom/render.h plugins/games/doom/fb.h plugins/games/doom/texture.h $(HARNESS_SRCS)
+build/host/test_doom_render: harness/tests/test_doom_render.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/palette.h plugins/games/doom/render.h plugins/games/doom/fb.h plugins/games/doom/texture.h plugins/games/doom/sprite.h plugins/games/doom/combat.h plugins/games/doom/collision.h $(HARNESS_SRCS)
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_doom_render.cpp $(HARNESS_SRCS)
 
@@ -145,7 +145,7 @@ build/host/test_bsp_map: harness/tests/test_bsp_map.cpp harness/tools/wad_build.
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_bsp_map.cpp $(HARNESS_SRCS)
 
-build/host/test_bsp_traverse: harness/tests/test_bsp_traverse.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/render.h plugins/games/doom/texture.h $(HARNESS_SRCS)
+build/host/test_bsp_traverse: harness/tests/test_bsp_traverse.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/render.h plugins/games/doom/texture.h plugins/games/doom/sprite.h plugins/games/doom/combat.h plugins/games/doom/collision.h $(HARNESS_SRCS)
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_bsp_traverse.cpp $(HARNESS_SRCS)
 
@@ -157,7 +157,7 @@ build/host/test_blockmap: harness/tests/test_blockmap.cpp harness/tools/wad_buil
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_blockmap.cpp $(HARNESS_SRCS)
 
-build/host/test_movement: harness/tests/test_movement.cpp plugins/games/doom/movement.h plugins/games/doom/render.h $(HARNESS_SRCS)
+build/host/test_movement: harness/tests/test_movement.cpp plugins/games/doom/movement.h plugins/games/doom/render.h plugins/games/doom/sprite.h plugins/games/doom/combat.h plugins/games/doom/collision.h $(HARNESS_SRCS)
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_movement.cpp $(HARNESS_SRCS)
 
@@ -168,6 +168,26 @@ build/host/test_input: harness/tests/test_input.cpp plugins/games/doom/input.h p
 build/host/test_collision: harness/tests/test_collision.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/collision.h plugins/games/doom/movement.h $(HARNESS_SRCS)
 	mkdir -p build/host
 	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_collision.cpp $(HARNESS_SRCS)
+
+build/host/test_things: harness/tests/test_things.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_things.cpp $(HARNESS_SRCS)
+
+build/host/test_sprite: harness/tests/test_sprite.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/arena.h plugins/games/doom/sprite.h plugins/games/doom/combat.h plugins/games/doom/collision.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_sprite.cpp $(HARNESS_SRCS)
+
+build/host/test_depth: harness/tests/test_depth.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/palette.h plugins/games/doom/render.h plugins/games/doom/fb.h plugins/games/doom/texture.h plugins/games/doom/sprite.h plugins/games/doom/combat.h plugins/games/doom/collision.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_depth.cpp $(HARNESS_SRCS)
+
+build/host/test_sprite_render: harness/tests/test_sprite_render.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/arena.h plugins/games/doom/sprite.h plugins/games/doom/render.h plugins/games/doom/fb.h plugins/games/doom/texture.h plugins/games/doom/palette.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_sprite_render.cpp $(HARNESS_SRCS)
+
+build/host/test_combat: harness/tests/test_combat.cpp harness/tools/wad_build.h plugins/games/doom/wad.h plugins/games/doom/geom.h plugins/games/doom/collision.h plugins/games/doom/combat.h $(HARNESS_SRCS)
+	mkdir -p build/host
+	$(HOST_CXX) $(HOST_FLAGS) -o $@ harness/tests/test_combat.cpp $(HARNESS_SRCS)
 
 build/host/wav_wrap: harness/tools/wav_wrap.cpp harness/tools/wav_wrap.h
 	mkdir -p build/host
@@ -187,7 +207,9 @@ host: build/host/test_wav_wrap build/host/test_wad build/host/test_doom_render \
       build/host/test_palette build/host/test_arena build/host/test_wad_read \
       build/host/test_geom_nodes build/host/test_bsp_map build/host/test_bsp_traverse \
       build/host/test_texture build/host/test_blockmap build/host/test_movement \
-      build/host/test_input build/host/test_collision
+      build/host/test_input build/host/test_collision build/host/test_things \
+      build/host/test_sprite build/host/test_depth build/host/test_sprite_render \
+      build/host/test_combat
 
 test: host
 	./build/host/test_wav_wrap
@@ -204,6 +226,11 @@ test: host
 	./build/host/test_movement
 	./build/host/test_input
 	./build/host/test_collision
+	./build/host/test_things
+	./build/host/test_sprite
+	./build/host/test_depth
+	./build/host/test_sprite_render
+	./build/host/test_combat
 
 # ---------------------------------------------------------------------------
 # Hardware deploy over USB-MIDI sysex (NT firmware v1.13+).
